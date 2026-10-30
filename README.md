@@ -1,30 +1,20 @@
-# Heating Planner v0.1.0 — aperçu en lecture seule
+# Heating Planner v0.2 — lecture seule
 
-**ATTENTION :** Prototype de démonstration. Les horaires et températures sont fictifs, codés en dur dans `const.py`. Ne pilote **aucun** `climate`, `input_*`, MQTT ou OPTA. Pas encore d'éditeur, de sauvegarde de planning, de réveil, de préchauffage ou d'exceptions configurables.
+Mise à jour de la v0.1 : températures des profils **Nuit / Éco / Confort** modifiables depuis **Paramètres → Appareils et services → Heating Planner → Configurer**.
 
-## Installation
-
+## Installation / mise à jour
 1. Faire une sauvegarde Home Assistant.
-2. Copier le dossier `custom_components/heating_planner` dans `/config/custom_components/heating_planner` sur Home Assistant (File Editor, Samba, SSH, etc.). Ne pas copier le dossier parent `heating_planner` du ZIP dans `custom_components`.
-3. Redémarrer Home Assistant.
-4. Aller dans **Paramètres → Appareils et services → Ajouter une intégration**, rechercher **Heating Planner (Preview)**.
-5. Conserver « Chambre Max (démo) » ou choisir un autre nom. Cette version ne crée qu'une seule zone fictive.
-6. Ouvrir l'appareil créé pour consulter les trois capteurs. Leurs identifiants précis sont attribués par Home Assistant ; ne pas supposer un `entity_id`.
+2. Décompresser l'archive et copier **custom_components/heating_planner/** dans **/config/custom_components/heating_planner/** en remplaçant les fichiers existants.
+3. Redémarrer Home Assistant (pas besoin de supprimer ou recréer l'intégration).
+4. Ouvrir **Paramètres → Appareils et services → Heating Planner (Preview) → Configurer** et ajuster les températures.
+5. Vérifier que « Consigne actuelle » et « Prochaine consigne » reflètent les profils configurés. Le recalcul est demandé immédiatement lors de l'enregistrement, et aussi chaque minute.
 
-## Ce que fait v0.1
+## Périmètre
+- Conserve la zone de démonstration existante et les mêmes identifiants uniques des trois capteurs.
+- Les plannings restent ceux de la v0.1, codés dans `const.py`. L'éditeur hebdomadaire n'est **pas encore disponible**.
+- Aucune commande `climate`, MQTT ou OPTA n'est envoyée.
+- Les valeurs des profils sont persistées dans les options de l'entrée de configuration Home Assistant.
+- Les valeurs sont limitées à 5–35 °C.
 
-- Calcule la consigne actuelle et la prochaine **modification de température** à partir d'un planning hebdomadaire fictif.
-- Gère le passage de minuit, les jours de semaine et week-end, et utilise le fuseau horaire Home Assistant.
-- Le moteur Python accepte aussi des exceptions datées, mais cette première intégration ne propose pas encore d'interface pour les définir.
-- Les heures inexistantes au changement d'heure sont décalées à la première minute valide ; une heure répétée utilise sa première occurrence. Ce choix est provisoire et doit être validé fonctionnellement.
-- Actualise les capteurs environ une fois par minute.
-
-## Limites et prochaines étapes
-
-- La configuration n'est **pas persistée par zone** : seul le nom de l'entrée est enregistré ; les profils/plannings sont constants.
-- Pas de gestion d'un planning partagé, de profils configurables, d'événements réveil ou d'actions de chauffage.
-- La logique est expérimentale et doit être testée avant toute connexion aux automatismes existants.
-
-## Désinstallation
-
-Supprimer l'intégration dans **Paramètres → Appareils et services**, puis supprimer `/config/custom_components/heating_planner` et redémarrer.
+## Retour arrière
+Restaurer les fichiers v0.1 et redémarrer. Les options v0.2 resteront enregistrées mais ignorées par v0.1.

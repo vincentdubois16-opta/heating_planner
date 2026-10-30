@@ -16,7 +16,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return calculate(
             dt_util.utcnow(),
             hass.config.time_zone,
-            DEFAULT_PROFILES,
+            entry.options.get("profiles", DEFAULT_PROFILES),
             DEFAULT_SCHEDULE,
         )
 
@@ -27,14 +27,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         update_method=update,
         update_interval=timedelta(minutes=1),
     )
+    # Refresh calculated sensors whenever the user changes profile temperatures.
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     await coordinator.async_config_entry_first_refresh()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
+async def _async_options_updated(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    coordinator = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if coordinator is not None:
+        await coordinator.async_request_refresh()
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     result = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if result:
+        entry.async_unload()
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return result
