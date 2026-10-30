@@ -12,7 +12,7 @@ SENSORS = (
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     async_add_entities(
         HeatingPlannerSensor(coordinator, entry, key, label, data_key)
         for key, label, data_key in SENSORS

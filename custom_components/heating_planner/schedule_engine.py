@@ -78,3 +78,39 @@ def calculate(now: datetime, timezone: str, profiles: dict, weekly: dict, except
         "next_target": upcoming[2] if upcoming else None,
         "next_change": datetime.fromtimestamp(upcoming[0], tz) if upcoming else None,
     }
+
+
+def validate_schedule(weekly: dict, profiles: dict) -> dict:
+    """Validate all seven days and return a normalized, safe copy."""
+    if not isinstance(weekly, dict) or set(weekly) != {str(i) for i in range(7)}:
+        raise ValueError("Le planning doit contenir les sept jours (0 à 6)")
+    clean = {}
+    for day in range(7):
+        entries = weekly[str(day)]
+        if not isinstance(entries, list) or not 1 <= len(entries) <= 48:
+            raise ValueError(f"Jour {day}: 1 à 48 plages attendues")
+        cleaned = []
+        seen = set()
+        for item in entries:
+            if not isinstance(item, dict) or set(item) != {"time", "profile"}:
+                raise ValueError(f"Jour {day}: entrée invalide")
+            value = item["time"]
+            if not isinstance(value, str) or len(value) != 5 or value[2] != ":":
+                raise ValueError(f"Jour {day}: heure invalide")
+            try:
+                hh, mm = (int(part) for part in value.split(":"))
+            except ValueError as exc:
+                raise ValueError(f"Jour {day}: heure invalide") from exc
+            if not (0 <= hh < 24 and 0 <= mm < 60) or f"{hh:02d}:{mm:02d}" != value:
+                raise ValueError(f"Jour {day}: heure invalide")
+            if value in seen:
+                raise ValueError(f"Jour {day}: heures en double")
+            seen.add(value)
+            if item["profile"] not in profiles:
+                raise ValueError(f"Jour {day}: profil inconnu")
+            cleaned.append({"time": value, "profile": item["profile"]})
+        cleaned.sort(key=lambda e: e["time"])
+        if cleaned[0]["time"] != "00:00":
+            raise ValueError(f"Jour {day}: première plage obligatoire à 00:00")
+        clean[str(day)] = cleaned
+    return clean
