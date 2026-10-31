@@ -14,9 +14,10 @@ from homeassistant.components import websocket_api
 from .const import DOMAIN, DEFAULT_PROFILES, DEFAULT_SCHEDULE
 from .schedule_engine import calculate, validate_schedule, validate_exceptions
 from .wake_engine import validate_wakes
+from .preheat_engine import calculate_with_preheat
 
 _LOGGER = logging.getLogger(__name__)
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "binary_sensor"]
 STORAGE_VERSION = 1
 
 
@@ -57,6 +58,7 @@ async def ws_get(hass, connection, msg):
         "exceptions": copy.deepcopy(obj["exceptions"]),
         "profiles": entry.options.get("profiles", DEFAULT_PROFILES),
         "readonly": True,
+        "preheat_minutes": entry.options.get("preheat_minutes", 0),
     })
 
 
@@ -173,9 +175,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     state = {"weekly": weekly, "exceptions": exceptions, "store": store}
 
     async def update():
-        return calculate(dt_util.utcnow(), hass.config.time_zone,
+        return calculate_with_preheat(dt_util.utcnow(), hass.config.time_zone,
                          entry.options.get("profiles", DEFAULT_PROFILES), state["weekly"], state["exceptions"],
-                         hass.data[f"{DOMAIN}_wakes"], entry.entry_id)
+                         hass.data[f"{DOMAIN}_wakes"], entry.entry_id, entry.options.get("preheat_minutes", 0))
 
     coordinator = DataUpdateCoordinator(hass, logger=_LOGGER,
         name=f"{DOMAIN}_{entry.entry_id}", update_method=update,

@@ -8,6 +8,9 @@ SENSORS = (
     ("target", "Consigne actuelle", "target"),
     ("next_target", "Prochaine consigne", "next_target"),
     ("next_change", "Prochain changement", "next_change"),
+    ("base_target", "Consigne sans préchauffage", "base_target"),
+    ("preheat_target", "Consigne de préchauffage", "preheat_target"),
+    ("preheat_start", "Début préchauffage", "preheat_start"),
 )
 
 
@@ -33,7 +36,7 @@ class HeatingPlannerSensor(CoordinatorEntity, SensorEntity):
             "name": entry.title,
             "manufacturer": "Heating Planner (preview)",
         }
-        if key == "next_change":
+        if key in ("next_change", "preheat_start"):
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
         else:
             self._attr_device_class = SensorDeviceClass.TEMPERATURE

@@ -1,4 +1,4 @@
-/* Heating Planner v0.5 — lightweight Lovelace weekly editor, no external dependencies. */
+/* Heating Planner v0.6 — lightweight Lovelace weekly editor, no external dependencies. */
 class HeatingPlannerCard extends HTMLElement {
   setConfig(config) { this.config = config; }
   set hass(hass) {
@@ -20,6 +20,7 @@ class HeatingPlannerCard extends HTMLElement {
       this._wakes = wakes.events; this._zones = wakes.zones; this._wakeIdx = 0; this._wakeDay = 0;
       this._date = new Date().toLocaleDateString("en-CA");
       this._profiles = data.profiles;
+      this._preheatMinutes = data.preheat_minutes || 0;
       this._day = 0;
       this._loaded = true;
       this._dirty = false;
@@ -40,7 +41,7 @@ class HeatingPlannerCard extends HTMLElement {
       <button data-remove="${i}" ${i===0?'disabled':''} title="Supprimer">✕</button>
     </div>`).join('');
     this.innerHTML = `<ha-card header="Heating Planner · ${this.escape(this._name)}"><div class="wrap">
-      <p class="note">Édition des horaires de démonstration · aucun pilotage du chauffage</p>
+      <p class="note">Édition des horaires de démonstration · aucun pilotage du chauffage · Préchauffage : ${this._preheatMinutes} min (réglage dans les options de l’intégration)</p>
       <div class="actions"><button id="tabweekly" class="${!isException?'active':''}">Semaine</button><button id="tabexceptions" class="${isException?'active':''}">Exceptions datées</button><button id="tabwakes">Réveils</button></div>
       ${isException ? `<div class="actions"><label>Date <input id="exceptiondate" type="date" value="${this.escape(this._date)}"></label><button id="newexception">Créer depuis la semaine</button><button id="deleteexception" ${this._exceptions[this._date]?'':'disabled'}>Supprimer l'exception</button></div><p class="note">${this._exceptions[this._date]?'Exception active : les horaires ci-dessous remplacent ceux du jour habituel.':'Aucune exception pour cette date : le planning hebdomadaire s’applique.'}</p><p class="note">Dates enregistrées : ${Object.keys(this._exceptions).sort().map(d=>`<button data-exceptiondate="${this.escape(d)}">${this.escape(d)}</button>`).join(' ') || 'aucune'}</p>` : ''}
       <div class="days" style="${isException?'display:none':''}">${days.map((d,i)=>`<button data-day="${i}" class="${i===this._day?'active':''}">${d}</button>`).join('')}</div>
