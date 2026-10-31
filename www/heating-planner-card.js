@@ -1,4 +1,4 @@
-/* Heating Planner v0.6 — lightweight Lovelace weekly editor, no external dependencies. */
+/* Heating Planner v0.7 — lightweight Lovelace weekly editor, no external dependencies. */
 class HeatingPlannerCard extends HTMLElement {
   setConfig(config) { this.config = config; }
   set hass(hass) {
@@ -13,6 +13,7 @@ class HeatingPlannerCard extends HTMLElement {
       if (!this._entry) throw Error('Aucune zone Heating Planner');
       const data = await this._hass.callWS({type:'heating_planner/get', entry_id:this._entry});
       this._name = data.name;
+      this._override = data.override || {mode:"planning"};
       this._weekly = data.weekly;
       this._exceptions = data.exceptions || {};
       this._tab = "weekly";
@@ -31,6 +32,7 @@ class HeatingPlannerCard extends HTMLElement {
   escape(s) { return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   render() {
     if (this._tab === "wakes") { this.renderWakes(); return; }
+    if (this._tab === "modes") { this.renderModes(); return; }
     const days = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
     const profiles = Object.keys(this._profiles);
     const isException = this._tab === 'exceptions';
@@ -42,7 +44,7 @@ class HeatingPlannerCard extends HTMLElement {
     </div>`).join('');
     this.innerHTML = `<ha-card header="Heating Planner · ${this.escape(this._name)}"><div class="wrap">
       <p class="note">Édition des horaires de démonstration · aucun pilotage du chauffage · Préchauffage : ${this._preheatMinutes} min (réglage dans les options de l’intégration)</p>
-      <div class="actions"><button id="tabweekly" class="${!isException?'active':''}">Semaine</button><button id="tabexceptions" class="${isException?'active':''}">Exceptions datées</button><button id="tabwakes">Réveils</button></div>
+      <div class="actions"><button id="tabweekly" class="${!isException?'active':''}">Semaine</button><button id="tabexceptions" class="${isException?'active':''}">Exceptions datées</button><button id="tabwakes">Réveils</button><button id="tabmodes">Modes</button></div>
       ${isException ? `<div class="actions"><label>Date <input id="exceptiondate" type="date" value="${this.escape(this._date)}"></label><button id="newexception">Créer depuis la semaine</button><button id="deleteexception" ${this._exceptions[this._date]?'':'disabled'}>Supprimer l'exception</button></div><p class="note">${this._exceptions[this._date]?'Exception active : les horaires ci-dessous remplacent ceux du jour habituel.':'Aucune exception pour cette date : le planning hebdomadaire s’applique.'}</p><p class="note">Dates enregistrées : ${Object.keys(this._exceptions).sort().map(d=>`<button data-exceptiondate="${this.escape(d)}">${this.escape(d)}</button>`).join(' ') || 'aucune'}</p>` : ''}
       <div class="days" style="${isException?'display:none':''}">${days.map((d,i)=>`<button data-day="${i}" class="${i===this._day?'active':''}">${d}</button>`).join('')}</div>
       <div class="rows">${rows}</div>
@@ -58,6 +60,7 @@ class HeatingPlannerCard extends HTMLElement {
     this.querySelector('#tabweekly').onclick=()=>{this._tab='weekly';this._dirty=false;this.render();};
     this.querySelector('#tabexceptions').onclick=()=>{this._tab='exceptions';this._dirty=false;this.render();};
     this.querySelector('#tabwakes').onclick=()=>{this._tab="wakes";this.render();};
+    this.querySelector('#tabmodes').onclick=()=>{this._tab="modes";this.render();};
     if (isException) {
       this.querySelector('#exceptiondate').onchange=e=>{this._date=e.target.value;this.render();};
       this.querySelectorAll('[data-exceptiondate]').forEach(b=>b.onclick=()=>{this._date=b.dataset.exceptiondate;this.render();});
@@ -77,6 +80,31 @@ class HeatingPlannerCard extends HTMLElement {
     this.querySelector('#copy').onclick=()=>{const dest=this.querySelector('#copyday').value;this._weekly[dest]=this._weekly[String(this._day)].map(e=>({...e}));this._dirty=true;this.render();};
     this.querySelector('#reload').onclick=()=>{this._loaded=false;this.load();};
     this.querySelector('#save').onclick=async()=>{const status=this.querySelector('#status');try{await this._hass.callWS(isException?{type:'heating_planner/set_exceptions',entry_id:this._entry,exceptions:this._exceptions}:{type:'heating_planner/set_schedule',entry_id:this._entry,weekly:this._weekly});this._dirty=false;this.render();this.querySelector('#status').textContent='✓ Planning enregistré';}catch(e){status.textContent='Erreur : '+e.message;}};
+  }
+  renderModes() {
+    const ov=this._override||{mode:'planning'};
+    const active=ov.mode!=='planning' && ov.until && new Date(ov.until)>new Date();
+    const mode=active?ov.mode:'planning';
+    const labels={planning:'Planning',manual:'Manuel',boost:'Boost',away:'Absent'};
+    const dateLocal=d=>{const x=new Date(d);return Number.isNaN(x.getTime())?'':`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}T${String(x.getHours()).padStart(2,'0')}:${String(x.getMinutes()).padStart(2,'0')}`;};
+    const tomorrow=new Date(Date.now()+86400000);
+    this.innerHTML=`<ha-card header="Heating Planner · Modes temporaires"><div class="wrap">
+      <p>Mode actif : <b>${labels[mode]}</b>${active?' — jusqu’au '+this.escape(new Date(ov.until).toLocaleString('fr-BE')):''}</p>
+      <p class="note">Un seul mode temporaire à la fois. Aucun pilotage du chauffage.</p>
+      <div class="actions"><label>Mode <select id="mode"><option value="planning">Planning</option><option value="manual">Manuel</option><option value="boost">Boost</option><option value="away">Absent</option></select></label></div>
+      <div id="temporary"><div class="actions"><label>Température (°C) <input id="temperature" type="number" min="5" max="35" step="0.5" value="${this.escape(active?ov.temperature:this._profiles.comfort||21)}"></label>
+      <label id="durationlabel">Durée <select id="duration"><option value="30">30 min</option><option value="60">1 h</option><option value="120" selected>2 h</option><option value="240">4 h</option></select></label>
+      <label id="untillabel">Jusqu’au <input id="until" type="datetime-local" value="${this.escape(active?dateLocal(ov.until):dateLocal(tomorrow))}"></label></div></div>
+      <div class="actions"><button id="apply" class="primary">Appliquer</button><button id="cancel">Retour au planning</button><button id="back">← Semaine</button></div><p id="status" role="status"></p>
+    </div></ha-card><style>.wrap{padding:0 16px 16px}.note{font-size:12px;opacity:.75}.actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}button,input,select{font:inherit;border:1px solid var(--divider-color,#aaa);border-radius:7px;padding:8px;background:var(--card-background-color,#fff);color:var(--primary-text-color,#222)}button{cursor:pointer}.primary{background:var(--primary-color,#03a9f4);color:white}</style>`;
+    const $=id=>this.querySelector('#'+id);
+    $('mode').value=mode;
+    const toggle=()=>{$('temporary').style.display=$('mode').value==='planning'?'none':'';$('durationlabel').style.display=$('mode').value==='away'?'none':'';$('untillabel').style.display=$('mode').value==='away'?'':'none';};
+    $('mode').onchange=()=>{if($('mode').value==='boost')$('temperature').value=this._profiles.comfort||21;if($('mode').value==='away')$('temperature').value=this._profiles.night||17;toggle();};toggle();
+    const send=async value=>{try{await this._hass.callWS({type:'heating_planner/set_mode',entry_id:this._entry,override:value});this._override=value;this.renderModes();$('status').textContent='✓ Mode enregistré';}catch(e){$('status').textContent='Erreur : '+e.message;}};
+    $('apply').onclick=()=>{const m=$('mode').value;if(m==='planning'){send({mode:'planning'});return;}const temperature=Number($('temperature').value);let until;if(m==='away'){until=new Date($('until').value);}else{until=new Date(Date.now()+Number($('duration').value)*60000);}if(!Number.isFinite(temperature)||Number.isNaN(until.getTime())){$('status').textContent='Température ou échéance invalide';return;}send({mode:m,temperature,until:until.toISOString()});};
+    $('cancel').onclick=()=>send({mode:'planning'});
+    $('back').onclick=()=>{this._tab='weekly';this.render();};
   }
   renderWakes() {
     const days=['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];

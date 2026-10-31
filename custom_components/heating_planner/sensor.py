@@ -11,6 +11,8 @@ SENSORS = (
     ("base_target", "Consigne sans préchauffage", "base_target"),
     ("preheat_target", "Consigne de préchauffage", "preheat_target"),
     ("preheat_start", "Début préchauffage", "preheat_start"),
+    ("active_mode", "Mode actif", "active_mode"),
+    ("override_until", "Fin du mode temporaire", "override_until"),
 )
 
 
@@ -36,9 +38,9 @@ class HeatingPlannerSensor(CoordinatorEntity, SensorEntity):
             "name": entry.title,
             "manufacturer": "Heating Planner (preview)",
         }
-        if key in ("next_change", "preheat_start"):
+        if key in ("next_change", "preheat_start", "override_until"):
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
-        else:
+        elif key != "active_mode":
             self._attr_device_class = SensorDeviceClass.TEMPERATURE
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
 

@@ -15,6 +15,7 @@ from .const import DOMAIN, DEFAULT_PROFILES, DEFAULT_SCHEDULE
 from .schedule_engine import calculate, validate_schedule, validate_exceptions
 from .wake_engine import validate_wakes
 from .preheat_engine import calculate_with_preheat
+from .override_engine import validate_override, apply_override
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "binary_sensor"]
@@ -30,6 +31,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, ws_set_exceptions)
     websocket_api.async_register_command(hass, ws_wakes_get)
     websocket_api.async_register_command(hass, ws_wakes_set)
+    websocket_api.async_register_command(hass, ws_set_mode)
     hass.data[f"{DOMAIN}_ws_registered"] = True
     return True
 
@@ -59,6 +61,7 @@ async def ws_get(hass, connection, msg):
         "profiles": entry.options.get("profiles", DEFAULT_PROFILES),
         "readonly": True,
         "preheat_minutes": entry.options.get("preheat_minutes", 0),
+        "override": copy.deepcopy(obj["override"]),
     })
 
 
@@ -82,7 +85,7 @@ async def ws_set(hass, connection, msg):
     except (ValueError, TypeError, KeyError) as exc:
         connection.send_error(msg["id"], "invalid_schedule", str(exc))
         return
-    await obj["store"].async_save({"weekly": normalized, "exceptions": obj["exceptions"]})
+    await obj["store"].async_save({"weekly": normalized, "exceptions": obj["exceptions"], "override": obj["override"]})
     obj["weekly"] = normalized
     await obj["coordinator"].async_request_refresh()
     connection.send_result(msg["id"], {"ok": True})
@@ -108,7 +111,7 @@ async def ws_set_exceptions(hass, connection, msg):
     except (ValueError, TypeError, KeyError) as exc:
         connection.send_error(msg["id"], "invalid_exceptions", str(exc))
         return
-    await obj["store"].async_save({"weekly": obj["weekly"], "exceptions": normalized})
+    await obj["store"].async_save({"weekly": obj["weekly"], "exceptions": normalized, "override": obj["override"]})
     obj["exceptions"] = normalized
     await obj["coordinator"].async_request_refresh()
     connection.send_result(msg["id"], {"ok": True})
@@ -147,6 +150,31 @@ async def ws_wakes_set(hass, connection, msg):
     connection.send_result(msg["id"], {"ok": True})
 
 
+@websocket_api.websocket_command({
+    vol.Required("type"): "heating_planner/set_mode",
+    vol.Required("entry_id"): str,
+    vol.Required("override"): dict,
+})
+@websocket_api.async_response
+async def ws_set_mode(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Administrateur requis")
+        return
+    obj = hass.data.get(DOMAIN, {}).get(msg["entry_id"])
+    if obj is None:
+        connection.send_error(msg["id"], "not_found", "Zone introuvable")
+        return
+    try:
+        override = validate_override(msg["override"], dt_util.utcnow())
+    except (ValueError, TypeError) as exc:
+        connection.send_error(msg["id"], "invalid_mode", str(exc))
+        return
+    await obj["store"].async_save({"weekly": obj["weekly"], "exceptions": obj["exceptions"], "override": override})
+    obj["override"] = override
+    await obj["coordinator"].async_request_refresh()
+    connection.send_result(msg["id"], {"ok": True})
+
+
 async def _load_wakes(hass):
     if f"{DOMAIN}_wakes" in hass.data:
         return
@@ -172,12 +200,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     except (ValueError, TypeError, KeyError) as exc:
         _LOGGER.error("Stored Heating Planner exceptions invalid; ignoring: %s", exc)
         exceptions = {}
-    state = {"weekly": weekly, "exceptions": exceptions, "store": store}
+    override = saved.get("override", {"mode": "planning"})
+    if not isinstance(override, dict):
+        override = {"mode": "planning"}
+    state = {"weekly": weekly, "exceptions": exceptions, "override": override, "store": store}
 
     async def update():
-        return calculate_with_preheat(dt_util.utcnow(), hass.config.time_zone,
-                         entry.options.get("profiles", DEFAULT_PROFILES), state["weekly"], state["exceptions"],
-                         hass.data[f"{DOMAIN}_wakes"], entry.entry_id, entry.options.get("preheat_minutes", 0))
+        now = dt_util.utcnow()
+        def planner(moment):
+            return calculate_with_preheat(moment, hass.config.time_zone,
+                entry.options.get("profiles", DEFAULT_PROFILES), state["weekly"], state["exceptions"],
+                hass.data[f"{DOMAIN}_wakes"], entry.entry_id, entry.options.get("preheat_minutes", 0))
+        base = planner(now)
+        effective = apply_override(base, state["override"], now)
+        if effective["active_mode"] != "planning":
+            expiry = effective["override_until"]
+            # During override, only the expiry can alter the setpoint; calculate
+            # the actual planner target at that moment, including preheat.
+            resume = planner(expiry)
+            if float(resume["target"]) != float(effective["target"]):
+                effective["next_change"] = expiry
+                effective["next_target"] = resume["target"]
+            else:
+                effective["next_change"] = resume["next_change"]
+                effective["next_target"] = resume["next_target"]
+        return effective
 
     coordinator = DataUpdateCoordinator(hass, logger=_LOGGER,
         name=f"{DOMAIN}_{entry.entry_id}", update_method=update,
