@@ -13,6 +13,7 @@ from homeassistant.components import websocket_api
 
 from .const import DOMAIN, DEFAULT_PROFILES, DEFAULT_SCHEDULE
 from .schedule_engine import calculate, validate_schedule, validate_exceptions
+from .wake_engine import validate_wakes
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor"]
@@ -26,6 +27,8 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, ws_get)
     websocket_api.async_register_command(hass, ws_set)
     websocket_api.async_register_command(hass, ws_set_exceptions)
+    websocket_api.async_register_command(hass, ws_wakes_get)
+    websocket_api.async_register_command(hass, ws_wakes_set)
     hass.data[f"{DOMAIN}_ws_registered"] = True
     return True
 
@@ -109,7 +112,50 @@ async def ws_set_exceptions(hass, connection, msg):
     connection.send_result(msg["id"], {"ok": True})
 
 
+@websocket_api.websocket_command({vol.Required("type"): "heating_planner/get_wakes"})
+@websocket_api.async_response
+async def ws_wakes_get(hass, connection, msg):
+    await _load_wakes(hass)
+    connection.send_result(msg["id"], {"events": copy.deepcopy(hass.data[f"{DOMAIN}_wakes"]),
+        "zones": [{"entry_id": entry.entry_id, "name": entry.title,
+                   "profiles": list(entry.options.get("profiles", DEFAULT_PROFILES))}
+                  for entry in hass.config_entries.async_entries(DOMAIN)
+                  if entry.entry_id in hass.data.get(DOMAIN, {})]})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "heating_planner/set_wakes", vol.Required("events"): list})
+@websocket_api.async_response
+async def ws_wakes_set(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Administrateur requis")
+        return
+    await _load_wakes(hass)
+    zones = {entry.entry_id: entry.options.get("profiles", DEFAULT_PROFILES)
+             for entry in hass.config_entries.async_entries(DOMAIN)
+             if entry.entry_id in hass.data.get(DOMAIN, {})}
+    try:
+        normalized = validate_wakes(msg["events"], zones)
+    except (ValueError, TypeError, KeyError) as exc:
+        connection.send_error(msg["id"], "invalid_wakes", str(exc))
+        return
+    await hass.data[f"{DOMAIN}_wakes_store"].async_save({"events": normalized})
+    hass.data[f"{DOMAIN}_wakes"] = normalized
+    for obj in hass.data.get(DOMAIN, {}).values():
+        await obj["coordinator"].async_request_refresh()
+    connection.send_result(msg["id"], {"ok": True})
+
+
+async def _load_wakes(hass):
+    if f"{DOMAIN}_wakes" in hass.data:
+        return
+    store = Store(hass, 1, f"{DOMAIN}.shared_wakes")
+    saved = await store.async_load() or {}
+    hass.data[f"{DOMAIN}_wakes_store"] = store
+    hass.data[f"{DOMAIN}_wakes"] = saved.get("events", [])
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    await _load_wakes(hass)
     store = Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}")
     saved = await store.async_load() or {}
     weekly = copy.deepcopy(DEFAULT_SCHEDULE)
@@ -128,7 +174,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def update():
         return calculate(dt_util.utcnow(), hass.config.time_zone,
-                         entry.options.get("profiles", DEFAULT_PROFILES), state["weekly"], state["exceptions"])
+                         entry.options.get("profiles", DEFAULT_PROFILES), state["weekly"], state["exceptions"],
+                         hass.data[f"{DOMAIN}_wakes"], entry.entry_id)
 
     coordinator = DataUpdateCoordinator(hass, logger=_LOGGER,
         name=f"{DOMAIN}_{entry.entry_id}", update_method=update,

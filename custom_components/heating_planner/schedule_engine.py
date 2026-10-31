@@ -39,7 +39,7 @@ def _resolve_wall_time(day: date, wall: time, tz: ZoneInfo) -> datetime:
     raise ValueError("Could not resolve local schedule time")
 
 
-def calculate(now: datetime, timezone: str, profiles: dict, weekly: dict, exceptions: dict | None = None) -> dict:
+def calculate(now: datetime, timezone: str, profiles: dict, weekly: dict, exceptions: dict | None = None, wakes=None, zone=None) -> dict:
     """Return active profile/target and next *actual target* change (within 14 days)."""
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
@@ -54,6 +54,29 @@ def calculate(now: datetime, timezone: str, profiles: dict, weekly: dict, except
                 raise ValueError(f"Unknown profile: {profile}")
             dt = _resolve_wall_time(day, wall, tz)
             events.append((dt.timestamp(), profile, float(profiles[profile])))
+    # Overlay wake windows over the normal schedule; date exceptions are the base.
+    # Wake events have priority. When a wake ends, restore the underlying schedule.
+    if wakes and zone:
+        from .wake_engine import wake_intervals
+        intervals = []
+        for offset in range(-1, 16):
+            day = local_now.date() + timedelta(days=offset)
+            intervals.extend(wake_intervals(wakes, zone, profiles, day, timezone))
+        boundaries = {e[0] for e in events}
+        for start, end, _, _ in intervals:
+            boundaries.add(start)
+            boundaries.add(end)
+        base = sorted(events, key=lambda e: e[0])
+        merged = []
+        for stamp in sorted(boundaries):
+            underlying = next((e for e in reversed(base) if e[0] <= stamp), None)
+            if underlying is None:
+                continue
+            active = [i for i in intervals if i[0] <= stamp < i[1]]
+            # Deterministic conflict handling: latest starting wake takes precedence.
+            selected = max(active, key=lambda i: (i[0], i[1])) if active else None
+            merged.append((stamp, selected[2], selected[3]) if selected else (stamp, underlying[1], underlying[2]))
+        events = merged
     events.sort(key=lambda event: event[0])
     now_ts = local_now.timestamp()
     past = [e for e in events if e[0] <= now_ts]

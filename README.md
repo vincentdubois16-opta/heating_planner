@@ -1,20 +1,26 @@
-# Heating Planner v0.2 — lecture seule
+# Heating Planner v0.5 — Réveils programmables (préversion)
 
-Mise à jour de la v0.1 : températures des profils **Nuit / Éco / Confort** modifiables depuis **Paramètres → Appareils et services → Heating Planner → Configurer**.
-
-## Installation / mise à jour
+## Installation
 1. Faire une sauvegarde Home Assistant.
-2. Décompresser l'archive et copier **custom_components/heating_planner/** dans **/config/custom_components/heating_planner/** en remplaçant les fichiers existants.
-3. Redémarrer Home Assistant (pas besoin de supprimer ou recréer l'intégration).
-4. Ouvrir **Paramètres → Appareils et services → Heating Planner (Preview) → Configurer** et ajuster les températures.
-5. Vérifier que « Consigne actuelle » et « Prochaine consigne » reflètent les profils configurés. Le recalcul est demandé immédiatement lors de l'enregistrement, et aussi chaque minute.
+2. Copier `custom_components/heating_planner/` vers `/config/custom_components/heating_planner/` (remplacer les fichiers).
+3. Copier `www/heating-planner-card.js` vers `/config/www/heating-planner-card.js`.
+4. Redémarrer Home Assistant et modifier la ressource du dashboard en `/local/heating-planner-card.js?v=5` (type module JavaScript). Garder la carte `type: custom:heating-planner-card`.
+5. Ne pas supprimer l'entrée d'intégration existante.
 
-## Périmètre
-- Conserve la zone de démonstration existante et les mêmes identifiants uniques des trois capteurs.
-- Les plannings restent ceux de la v0.1, codés dans `const.py`. L'éditeur hebdomadaire n'est **pas encore disponible**.
-- Aucune commande `climate`, MQTT ou OPTA n'est envoyée.
-- Les valeurs des profils sont persistées dans les options de l'entrée de configuration Home Assistant.
-- Les valeurs sont limitées à 5–35 °C.
+## Nouveautés
+- Onglet « Réveils » : événements nommés et horaires différents pour chaque jour de semaine.
+- Un événement peut concerner plusieurs zones Heating Planner, chacune avec son propre profil.
+- Exceptions ponctuelles à une date : autre heure, suppression du réveil ou retour à l'horaire habituel.
+- Priorité : réveil actif > exception datée de planning > semaine habituelle. À la fin du réveil, retour automatique à la consigne normale du moment.
+- Les réveils sont partagés entre les entrées Heating Planner et stockés dans `.storage/heating_planner.shared_wakes`.
+- Les réveils traversant minuit ne sont pas encore pris en charge. Le préchauffage et le contrôle des thermostats ne sont pas activés.
 
-## Retour arrière
-Restaurer les fichiers v0.1 et redémarrer. Les options v0.2 resteront enregistrées mais ignorées par v0.1.
+## Validation
+- Créer un réveil, régler lundi-vendredi 06:30–08:00 et samedi-dimanche 08:00–09:30.
+- Choisir une ou plusieurs zones et un profil par zone, enregistrer.
+- Choisir une date, cliquer « Voir la date », modifier puis « Définir cette date » et « Enregistrer les réveils ».
+- Contrôler « Prochaine consigne » et « Prochain changement » lorsque le réveil approche.
+- Pour désactiver le réveil à une date : « Pas de réveil à cette date » puis enregistrer.
+
+## Important
+Cette version ne pilote ni OPTA, ni MQTT, ni aucun équipement. Les modifications de réveils nécessitent un compte administrateur HA.
