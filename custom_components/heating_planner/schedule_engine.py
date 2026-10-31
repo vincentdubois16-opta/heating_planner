@@ -114,3 +114,23 @@ def validate_schedule(weekly: dict, profiles: dict) -> dict:
             raise ValueError(f"Jour {day}: première plage obligatoire à 00:00")
         clean[str(day)] = cleaned
     return clean
+
+
+def validate_exceptions(exceptions: dict, profiles: dict) -> dict:
+    """Validate date-specific complete day schedules; empty dict clears overrides."""
+    if not isinstance(exceptions, dict) or len(exceptions) > 366:
+        raise ValueError("Maximum 366 dates d'exception")
+    clean = {}
+    for iso, entries in exceptions.items():
+        if not isinstance(iso, str):
+            raise ValueError("Date invalide")
+        try:
+            day = date.fromisoformat(iso)
+        except ValueError as exc:
+            raise ValueError(f"Date invalide : {iso}") from exc
+        if day.isoformat() != iso:
+            raise ValueError(f"Date non canonique : {iso}")
+        # Reuse the exact weekly day validator for each dated override.
+        probe = {str(i): entries for i in range(7)}
+        clean[iso] = validate_schedule(probe, profiles)["0"]
+    return dict(sorted(clean.items()))

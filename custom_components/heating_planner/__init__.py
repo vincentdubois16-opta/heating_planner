@@ -12,7 +12,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.components import websocket_api
 
 from .const import DOMAIN, DEFAULT_PROFILES, DEFAULT_SCHEDULE
-from .schedule_engine import calculate, validate_schedule
+from .schedule_engine import calculate, validate_schedule, validate_exceptions
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor"]
@@ -25,6 +25,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, ws_list)
     websocket_api.async_register_command(hass, ws_get)
     websocket_api.async_register_command(hass, ws_set)
+    websocket_api.async_register_command(hass, ws_set_exceptions)
     hass.data[f"{DOMAIN}_ws_registered"] = True
     return True
 
@@ -50,6 +51,7 @@ async def ws_get(hass, connection, msg):
     connection.send_result(msg["id"], {
         "name": entry.title,
         "weekly": copy.deepcopy(obj["weekly"]),
+        "exceptions": copy.deepcopy(obj["exceptions"]),
         "profiles": entry.options.get("profiles", DEFAULT_PROFILES),
         "readonly": True,
     })
@@ -75,8 +77,34 @@ async def ws_set(hass, connection, msg):
     except (ValueError, TypeError, KeyError) as exc:
         connection.send_error(msg["id"], "invalid_schedule", str(exc))
         return
-    await obj["store"].async_save({"weekly": normalized})
+    await obj["store"].async_save({"weekly": normalized, "exceptions": obj["exceptions"]})
     obj["weekly"] = normalized
+    await obj["coordinator"].async_request_refresh()
+    connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "heating_planner/set_exceptions",
+    vol.Required("entry_id"): str,
+    vol.Required("exceptions"): dict,
+})
+@websocket_api.async_response
+async def ws_set_exceptions(hass, connection, msg):
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Administrateur requis")
+        return
+    obj = hass.data.get(DOMAIN, {}).get(msg["entry_id"])
+    if obj is None:
+        connection.send_error(msg["id"], "not_found", "Zone introuvable")
+        return
+    entry = hass.config_entries.async_get_entry(msg["entry_id"])
+    try:
+        normalized = validate_exceptions(msg["exceptions"], entry.options.get("profiles", DEFAULT_PROFILES))
+    except (ValueError, TypeError, KeyError) as exc:
+        connection.send_error(msg["id"], "invalid_exceptions", str(exc))
+        return
+    await obj["store"].async_save({"weekly": obj["weekly"], "exceptions": normalized})
+    obj["exceptions"] = normalized
     await obj["coordinator"].async_request_refresh()
     connection.send_result(msg["id"], {"ok": True})
 
@@ -91,11 +119,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         except (ValueError, TypeError, KeyError) as exc:
             _LOGGER.error("Stored Heating Planner schedule invalid; using demo defaults: %s", exc)
 
-    state = {"weekly": weekly, "store": store}
+    try:
+        exceptions = validate_exceptions(saved.get("exceptions", {}), entry.options.get("profiles", DEFAULT_PROFILES))
+    except (ValueError, TypeError, KeyError) as exc:
+        _LOGGER.error("Stored Heating Planner exceptions invalid; ignoring: %s", exc)
+        exceptions = {}
+    state = {"weekly": weekly, "exceptions": exceptions, "store": store}
 
     async def update():
         return calculate(dt_util.utcnow(), hass.config.time_zone,
-                         entry.options.get("profiles", DEFAULT_PROFILES), state["weekly"])
+                         entry.options.get("profiles", DEFAULT_PROFILES), state["weekly"], state["exceptions"])
 
     coordinator = DataUpdateCoordinator(hass, logger=_LOGGER,
         name=f"{DOMAIN}_{entry.entry_id}", update_method=update,
