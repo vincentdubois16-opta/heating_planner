@@ -28,6 +28,10 @@ class HeatingPlannerOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data={
                 **self.config_entry.options,
+                "dynamic_preheat": user_input["dynamic_preheat"],
+                "temperature_entity": user_input["temperature_entity"].strip(),
+                "slope_entity": user_input["slope_entity"].strip(),
+                "max_preheat_minutes": user_input["max_preheat_minutes"],
                 "away_temperature": float(user_input["away_temperature"]),
                 "boost_temperature": float(user_input["boost_temperature"]),
                 "profiles": {k: float(user_input[k]) for k in DEFAULT_PROFILES},
@@ -42,4 +46,8 @@ class HeatingPlannerOptionsFlow(config_entries.OptionsFlow):
         schema[vol.Required("preheat_minutes", default=int(self.config_entry.options.get("preheat_minutes", 0)))] = vol.All(vol.Coerce(int), vol.Range(min=0, max=360))
         for key, default in (("away_temperature", 15.0), ("boost_temperature", float(existing.get("comfort", 21.0)))):
             schema[vol.Required(key, default=float(self.config_entry.options.get(key, default)))] = vol.All(vol.Coerce(float), vol.Range(min=5, max=35))
+        schema[vol.Required("dynamic_preheat", default=self.config_entry.options.get("dynamic_preheat", False))] = bool
+        schema[vol.Required("temperature_entity", default=self.config_entry.options.get("temperature_entity", "sensor.temperature_chambre_max"))] = str
+        schema[vol.Required("slope_entity", default=self.config_entry.options.get("slope_entity", "input_number.max_bedroom_slope"))] = str
+        schema[vol.Required("max_preheat_minutes", default=self.config_entry.options.get("max_preheat_minutes", 180))] = vol.All(vol.Coerce(int), vol.Range(min=0, max=360))
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))

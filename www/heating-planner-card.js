@@ -1,4 +1,4 @@
-/* Heating Planner v0.8.7 — lightweight Lovelace weekly editor, no external dependencies. */
+/* Heating Planner v0.9.0 — lightweight Lovelace weekly editor, no external dependencies. */
 class HeatingPlannerCard extends HTMLElement {
   setConfig(config) { this.config = config; }
   set hass(hass) {
@@ -205,6 +205,7 @@ class HeatingPlannerCard extends HTMLElement {
       <div class="hp-heading"><div><h2>${esc(this.config.name||this._name)}</h2><p class="hp-subtitle">Chauffage · ${esc(subtitles[effective.active_mode]||'Mode indisponible')}</p></div><span class="hp-badge ${heating==='heating'?'hp-heating':''}" role="status">${esc(stateLabel)}</span></div>
       <div class="hp-grid"><div class="hp-metric"><span>Température actuelle</span><strong>${format(raw)} °C</strong></div><div class="hp-metric"><span>Consigne effective</span><strong>${format(temp)} °C</strong></div></div>
       <div class="hp-next"><div><span>Prochain changement</span><strong>${esc(next)}</strong></div><span class="hp-badge">${esc(modeLabel)}${effective.preheat_active?' · Préchauffage':''}</span></div>
+      ${effective.preheat_strategy?`<p class="hp-help" id="dynamic-preheat">${effective.active_mode!=='planning'?'Préchauffage suspendu pendant le mode temporaire.':effective.preheat_strategy==='fixed_fallback'?'Préchauffage fixe de secours : température ou vitesse indisponible/invalide.':effective.dynamic_start?'Préchauffage dynamique '+(effective.preheat_active?'en cours':'prévu')+' · début '+esc(new Date(effective.dynamic_start).toLocaleString('fr-BE'))+' · '+esc(effective.dynamic_minutes)+' min · objectif '+format(effective.dynamic_target)+' °C · vitesse '+esc(effective.dynamic_slope)+' °C/h':'Préchauffage dynamique : aucune hausse prévue.'}</p>`:''}
       <div class="hp-mode-buttons"><button id="home-modes" data-home-mode="manual">Manuel</button><button data-home-mode="boost">Boost</button><button data-home-mode="away">Absent</button></div>
       <div class="hp-buttons"><button id="home-week">Planning</button><button id="home-exceptions">Exceptions</button><button id="home-wakes">Réveils</button></div>
       <h3>Planning du jour</h3>${this.timeline(rows,'Aujourd’hui')}<p class="hp-help">Clique sur une plage pour l’éditer. Aucun pilotage OPTA.</p>

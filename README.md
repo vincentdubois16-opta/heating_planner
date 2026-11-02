@@ -1,64 +1,51 @@
-# Heating Planner v0.8.7 — Accueil et mesures réelles
+# Heating Planner v0.9.0 — Préchauffage dynamique
 
-## Installation
-Sauvegarder Home Assistant, remplacer `/config/custom_components/heating_planner/` et `/config/www/heating-planner-card.js` avec le contenu du ZIP. Ne pas supprimer l’intégration ni `.storage`. Redémarrer Home Assistant et utiliser la ressource `/local/heating-planner-card.js?v=0.8.4`, puis actualiser complètement le navigateur.
+## Installation depuis v0.8.x
+1. Effectuer une sauvegarde Home Assistant.
+2. Remplacer `/config/custom_components/heating_planner/` et `/config/www/heating-planner-card.js` avec ceux du ZIP. Ne pas supprimer l’intégration, ses entrées ou les fichiers `.storage`.
+3. Redémarrer Home Assistant.
+4. Changer la ressource en `/local/heating-planner-card.js?v=0.9.0`, puis actualiser complètement la page.
 
-## Température et état de chauffe
-« Non connecté » dans les versions précédentes concernait uniquement l’état de chauffe. Une température pouvait être lue correctement sans que l’état de chauffe soit renseigné.
+## Activer pour Chambre Max
+Dans Paramètres → Appareils et services → Heating Planner → Configurer (ou Options) :
+- Activer le préchauffage dynamique : cocher (désactivé par défaut pour préserver la v0.8).
+- Entité de température : `sensor.temperature_chambre_max`.
+- Entité de vitesse de chauffe : `input_number.max_bedroom_slope`.
+- Durée maximale : 180 minutes par défaut, réglable de 0 à 360 minutes. 0 désactive l’anticipation dynamique.
+- Préchauffage (minutes) : conserver la durée fixe voulue comme secours.
 
-Avec un thermostat climate :
-```yaml
-type: custom:heating-planner-card
-name: Chambre Max
-temperature_entity: climate.chambre_max
-```
-La carte lit automatiquement `current_temperature` et `hvac_action` sur cette entité. Remplacer les identifiants d’exemple par vos entités réelles. `name` est facultatif et modifie seulement le titre de la carte.
+La valeur 1,68 °C/h est lue dans ton input_number existant ; Heating Planner ne crée ni ne modifie cet assistant. Ajuste-le dans Home Assistant si nécessaire. Les entités de calcul sont définies dans les options de l’intégration, indépendamment des entités d’affichage de la carte. La température peut aussi venir de current_temperature d’un climate. Les températures doivent être en °C et la vitesse en °C/h.
 
-Avec un capteur de température distinct :
-```yaml
-type: custom:heating-planner-card
-name: Chambre Max
-temperature_entity: sensor.temperature_chambre_max
-heating_entity: climate.chambre_max
-```
-`heating_entity` peut aussi être un binary_sensor ou un switch dont on/off indique réellement la chauffe. Attention : une autorisation générale du chauffage n’indique pas nécessairement une chauffe en cours. Aucune commande n’est envoyée à ces entités.
-
-Pour un attribut de température spécifique, ajouter `temperature_attribute: current_temperature` (ou le nom de l’attribut voulu) ; sinon la carte lit l’état du sensor, ou automatiquement `current_temperature` pour un climate.
-
-Les températures configurées sont supposées en °C, comme les consignes du moteur. Utiliser un capteur en °C.
-
-Libellés de l’état de chauffe :
-- Chauffe : `hvac_action: heating` ou état on d’un indicateur de chauffe.
-- Au repos : `hvac_action: idle`.
-- Arrêté : `hvac_action: off` ou état off d’un indicateur de chauffe.
-- État de chauffe non renseigné : aucune entité d’état configurée et aucune entité climate utilisée pour la température.
-- État de chauffe indisponible : entité absente, unknown ou unavailable.
-- État de chauffe inconnu : entité disponible sans indication reconnue. Sans hvac_action, un climate off affiche Arrêté et un climate heat affiche Chauffage activé, sans affirmer une chauffe réelle.
-
-Sans source valide, la température affiche « — ». Le mode Planning/Manuel/Boost/Absent et la consigne effective restent ceux du moteur Heating Planner.
-
-## Accueil
-Présentation inspirée de la maquette : température actuelle à gauche, consigne effective à droite, état de chauffe en haut, prochain changement, badge du mode et boutons Manuel/Boost/Absent séparés. Ces boutons ouvrent le formulaire correspondant ; Appliquer reste nécessaire pour activer le mode. La frise du jour reste éditable. Toutes les corrections et options de la v0.8.3 sont incluses.
-
-## Vérifications
-Syntaxe JavaScript et Python : OK. Tests Chrome : lecture sensor et climate.current_temperature, hvac_action, données indisponibles, bouton Absent et consigne configurée, largeur mobile, focus horaire, tri, ajout, sélection unique et modes : OK. Contrôle visuel mobile réalisé.
-Tous les fichiers Python sont identiques à la v0.8.3 (hors version du manifest JSON). Moteurs et stockage conservés. Aucune commande OPTA. Pas de validation sur une installation Home Assistant réelle.
-
-## Correction v0.8.7
-Le bouton bleu correspond au mode réellement actif : Manuel, Boost ou Absent. En Planning, aucun de ces trois boutons n’est surligné. Ouvrir un formulaire ne change pas le mode : cliquer sur Appliquer reste nécessaire. Tests Chrome des quatre modes et de la couleur : OK. Aucun changement du moteur ou des données.
-
-## Correction v0.8.7 : état climate sans hvac_action
-La configuration suivante est conservée telle quelle :
+La configuration de carte reste valable :
 ```yaml
 type: custom:heating-planner-card
 temperature_entity: sensor.temperature_chambre_max
 heating_entity: climate.climate_max_bedroom
 ```
-La carte privilégie hvac_action si disponible. À défaut, elle lit state : off → Arrêté ; heat → Chauffage activé. Le mode heat ne prouve pas une chauffe en cours. Chauffe est réservé à hvac_action heating ou à un indicateur on de chauffe réelle. Le mode Absent de Heating Planner reste distinct de cet état de l’équipement.
-Pour ce correctif seul, remplacer le fichier JavaScript et passer la ressource à /local/heating-planner-card.js?v=0.8.6 ; aucun redémarrage Home Assistant nécessaire. Actualiser complètement la page.
-Syntaxe et tests Chrome : OK, notamment off/heat sans attribut, priorité hvac_action et état indisponible. Aucun changement Python, moteur ou stockage. Aucune commande OPTA.
 
-## Correction v0.8.7 : alignement de la frise
-Les plages sont positionnées proportionnellement à leurs heures exactes sur 24 heures. Le texte, les bordures et les marges des boutons ne déforment plus les durées. Les repères 06:00, 12:00 et 18:00 sont centrés à 25 %, 50 % et 75 %. Correction commune à l’accueil et aux éditeurs.
-Remplacer uniquement le JavaScript, utiliser /local/heating-planner-card.js?v=0.8.7 et actualiser complètement la page.
-Tests Chrome géométriques à 390 et 1000 pixels, accueil et éditeur, y compris une plage de 1 minute : OK. Tests de régression interface : OK. Moteurs et données inchangés.
+## Calcul et affichage
+Durée = arrondi supérieur en minutes de max(0, consigne future − température actuelle) / vitesse × 60, limitée au maximum configuré.
+Exemple : de 17 à 21 °C à 1,68 °C/h → 143 minutes ; objectif à 10:00 → début estimé à 07:37.
+Le calcul examine les hausses du planning effectif, réveils et exceptions compris. La plus forte consigne de préchauffage active reste prioritaire comme auparavant. L’accueil indique le début estimé, la durée, l’objectif et la vitesse. Les informations sont aussi exposées dans les attributs du capteur Consigne actuelle (dynamic_start, dynamic_deadline, dynamic_minutes, dynamic_target, dynamic_slope, preheat_strategy).
+
+Le coordinateur recalcule chaque minute et lors de changements de configuration/planning : prévoir jusqu’à une minute pour une modification de la sonde ou de la vitesse. L’accueil se rafraîchit via Home Assistant.
+Une fenêtre de préchauffage déjà déclenchée reste active jusqu’à son échéance malgré la montée de température. Ce maintien est en mémoire : après redémarrage, reconfiguration ou modification du planning, il est recalculé avec les mesures disponibles.
+
+Température absente/non numérique, ou vitesse absente, non finie ou ≤ 0 : retour au préchauffage fixe et message de secours. Les entités unknown/unavailable sont traitées comme indisponibles. Une mesure numérique ancienne n’est pas détectée comme périmée automatiquement.
+Manuel, Boost et Absent restent prioritaires et suspendent le préchauffage. L’estimation de la reprise à la fin d’un mode temporaire utilise le préchauffage fixe, car la température future est inconnue ; le dynamique reprend avec la mesure réelle à l’expiration.
+
+Cette première version utilise la température actuelle pour ses prévisions : elle ne modélise ni le refroidissement futur, ni la météo, ni l’inertie, et n’apprend pas automatiquement la vitesse. La vitesse est gérée par ton input_number. Le résultat est une estimation à observer avant d’envisager le pilotage.
+
+## Préservation et périmètre
+Formats de stockage et identifiants conservés, aucune migration. Moteurs de planning, réveils et modes temporaires conservés ; le moteur de préchauffage accepte désormais une anticipation par transition. Désactiver le dynamique rétablit le calcul fixe existant.
+Aucune commande OPTA, aucun appel de service climate/switch et aucune écriture vers tes assistants. Le lien OPTA et l’ajout d’autres pièces ne font pas partie de cette version.
+
+## Vérifications
+- Syntaxe Python et JavaScript : OK.
+- Tests dynamiques : 1,68 °C/h, plafond, maintien jusqu’à échéance, fin de préchauffage, secours, valeurs invalides, objectif déjà atteint, exceptions datées, réveils et priorité Absent : OK.
+- Tests existants du préchauffage fixe et des modes temporaires : OK.
+- Tests Chrome de l’affichage dynamique/secours/suspension et régressions de l’interface : OK.
+- Intégrité ZIP : OK.
+Pas de validation sur une installation Home Assistant réelle. Après installation, activer le calcul et comparer l’heure prévue avec un objectif connu, sans connecter de commande OPTA.
+
+Pour exécuter les tests Python autonomes, se placer à la racine du ZIP : `python test_dynamic_preheat.py` et `python test_preheat_regression.py`. Le test navigateur nécessite Node.js, Playwright et Chrome (`node test_ui.cjs`).

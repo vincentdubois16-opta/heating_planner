@@ -15,7 +15,7 @@ def _base_transitions(start, horizon, timezone, profiles, weekly, exceptions, wa
         cursor = boundary + timedelta(seconds=1)
 
 
-def _effective_at(moment, timezone, profiles, weekly, exceptions, wakes, zone, lead):
+def _effective_at(moment, timezone, profiles, weekly, exceptions, wakes, zone, lead, lead_for=None):
     base = calculate(moment, timezone, profiles, weekly, exceptions, wakes, zone)
     target = float(base['target'])
     if lead <= 0:
@@ -26,7 +26,7 @@ def _effective_at(moment, timezone, profiles, weekly, exceptions, wakes, zone, l
     for boundary, before, after in _base_transitions(
         start, horizon, timezone, profiles, weekly, exceptions, wakes, zone
     ):
-        preheat_start = boundary - timedelta(minutes=lead)
+        preheat_start = boundary - timedelta(minutes=lead_for(boundary, after) if lead_for else lead)
         if after > before and preheat_start <= moment < boundary and after > target:
             active.append((after, preheat_start, boundary))
     if not active:
@@ -35,12 +35,12 @@ def _effective_at(moment, timezone, profiles, weekly, exceptions, wakes, zone, l
     return after, preheat_start
 
 
-def calculate_with_preheat(now, timezone, profiles, weekly, exceptions, wakes, zone, lead_minutes):
+def calculate_with_preheat(now, timezone, profiles, weekly, exceptions, wakes, zone, lead_minutes, lead_for=None):
     """Calculate current effective setpoint and its next *real* change."""
     lead = max(0, min(360, int(lead_minutes)))
     base = calculate(now, timezone, profiles, weekly, exceptions, wakes, zone)
     target, active_start = _effective_at(
-        now, timezone, profiles, weekly, exceptions, wakes, zone, lead
+        now, timezone, profiles, weekly, exceptions, wakes, zone, lead, lead_for
     )
     result = dict(base)
     result.update(target=target, base_target=base['target'],
@@ -61,14 +61,14 @@ def calculate_with_preheat(now, timezone, profiles, weekly, exceptions, wakes, z
         if boundary > now:
             boundaries.add(boundary)
         if lead and after > before:
-            early = boundary - timedelta(minutes=lead)
+            early = boundary - timedelta(minutes=lead_for(boundary, after) if lead_for else lead)
             if now < early <= horizon:
                 boundaries.add(early)
 
     for boundary in sorted(boundaries):
         future, _ = _effective_at(
             boundary + timedelta(microseconds=1), timezone, profiles,
-            weekly, exceptions, wakes, zone, lead
+            weekly, exceptions, wakes, zone, lead, lead_for
         )
         if future != target:
             result['next_change'] = boundary

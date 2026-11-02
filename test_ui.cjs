@@ -96,8 +96,16 @@ for(const width of [390,1000]){
  }
 }
 console.log('PASS : positions et largeurs exactes des plages et repères, mobile/ordinateur, accueil/éditeur');
+await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c._effective={target:21,active_mode:'planning',preheat_strategy:'dynamic',dynamic_start:'2026-11-03T07:37:00+01:00',dynamic_minutes:143,dynamic_target:21,dynamic_slope:1.68};c._tab='overview';c.render();});
+if(!(await page.locator('#dynamic-preheat').textContent()).includes('143 min'))throw Error('dynamic display');
+await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c._effective.preheat_strategy='fixed_fallback';c.render();});
+if(!(await page.locator('#dynamic-preheat').textContent()).includes('secours'))throw Error('fallback display');
+await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c._effective.active_mode='away';c.render();});
+if(!(await page.locator('#dynamic-preheat').textContent()).includes('suspendu'))throw Error('override display');
+console.log('PASS : affichage anticipation dynamique, secours et suspension');
 await browser.close();
 })();
+
 
 
 

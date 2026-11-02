@@ -19,7 +19,11 @@
           "comfort": "Confort (°C)",
           "preheat_minutes": "Préchauffage (minutes)",
           "away_temperature": "Consigne Absent (°C)",
-          "boost_temperature": "Consigne Boost (°C)"
+          "boost_temperature": "Consigne Boost (°C)",
+          "dynamic_preheat": "Activer le préchauffage dynamique",
+          "temperature_entity": "Entité de température (°C)",
+          "slope_entity": "Entité de vitesse de chauffe (°C/h)",
+          "max_preheat_minutes": "Durée maximale du préchauffage dynamique (minutes)"
         }
       }
     }

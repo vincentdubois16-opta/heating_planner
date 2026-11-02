@@ -47,3 +47,11 @@ class HeatingPlannerSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.data[self._data_key]
+
+    @property
+    def extra_state_attributes(self):
+        if self._key != "target":
+            return None
+        return {key: value.isoformat() if hasattr(value, "isoformat") else value
+                for key, value in self.coordinator.data.items()
+                if key.startswith("dynamic_") or key == "preheat_strategy"}
