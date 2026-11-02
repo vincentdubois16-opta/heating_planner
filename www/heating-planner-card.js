@@ -1,4 +1,4 @@
-/* Heating Planner v0.8.1 — lightweight Lovelace weekly editor, no external dependencies. */
+/* Heating Planner v0.8.3 — lightweight Lovelace weekly editor, no external dependencies. */
 class HeatingPlannerCard extends HTMLElement {
   setConfig(config) { this.config = config; }
   set hass(hass) {
@@ -14,6 +14,7 @@ class HeatingPlannerCard extends HTMLElement {
       if (!this._entry) throw Error('Aucune zone Heating Planner');
       const data = await this._hass.callWS({type:'heating_planner/get', entry_id:this._entry});
       this._effective = data.effective || {};
+      this._modeTemperatures = data.mode_temperatures || {away:15,boost:21};
       this._name = data.name;
       this._override = data.override || {mode:"planning"};
       this._weekly = data.weekly;
@@ -36,6 +37,7 @@ class HeatingPlannerCard extends HTMLElement {
     try {
       const data = await this._hass.callWS({type:'heating_planner/get',entry_id:this._entry});
       this._effective = data.effective || {};
+      this._modeTemperatures = data.mode_temperatures || {away:15,boost:21};
       if (this._tab === 'overview') this.renderOverview();
     } catch (_) { /* Keep the last display; Home Assistant will retry. */ }
     finally { this._refreshing = false; }
@@ -44,6 +46,7 @@ class HeatingPlannerCard extends HTMLElement {
     this.querySelectorAll('.hp-row-focus').forEach(row=>row.classList.remove('hp-row-focus'));
     this.querySelectorAll('[data-segment]').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.dataset.segment)===index)));
     const row=this.querySelectorAll('.row')[index];
+    this._selectedEntry=this._editorSource?.[index];
     if(row){row.classList.add('hp-row-focus');row.scrollIntoView({behavior:'smooth',block:'nearest'});row.querySelector('select')?.focus();}
   }
   updateTimeline(source, label) {
@@ -62,6 +65,8 @@ class HeatingPlannerCard extends HTMLElement {
     const profiles = Object.keys(this._profiles);
     const isException = this._tab === 'exceptions';
     const source = isException ? (this._exceptions[this._date] || []) : this._weekly[String(this._day)];
+    source.sort((a,b)=>a.time.localeCompare(b.time));
+    this._editorSource=source;
     const timeline = this.timeline(source, isException ? this._date : days[this._day]);
     const rows = source.map((row,i)=>`<div class="row">
       <input aria-label="Heure" type="time" value="${this.escape(row.time)}" data-i="${i}" data-key="time" ${i===0?'disabled':''}>
@@ -103,14 +108,56 @@ class HeatingPlannerCard extends HTMLElement {
       this.querySelector('#deleteexception').onclick=()=>{delete this._exceptions[this._date];this._dirty=true;this.render();};
     }
     this.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{this._day=Number(b.dataset.day);this.render();});
-    this.querySelectorAll('[data-key]').forEach(el=>el.onchange=()=>{
-      if (!el.value || !el.checkValidity()) return;
-      (isException?this._exceptions[this._date]:this._weekly[String(this._day)])[Number(el.dataset.i)][el.dataset.key]=el.value;
-      this._dirty=true; this.querySelector('#save').disabled=false;
+    const reorderRows=()=>{
+      const nodes=new Map([...this.querySelectorAll('.row')].map(row=>[source[Number(row.querySelector('[data-i]').dataset.i)],row]));
+      source.sort((a,b)=>a.time.localeCompare(b.time));
+      const active=document.activeElement;
+      const parent=this.querySelector('.rows');
+      source.forEach((entry,i)=>{
+        const row=nodes.get(entry);
+        row.querySelectorAll('[data-i]').forEach(el=>el.dataset.i=String(i));
+        row.querySelector('[data-remove]').dataset.remove=String(i);
+        if(parent.children[i]!==row)parent.insertBefore(row,parent.children[i]||null);
+      });
+      if(active?.isConnected && document.activeElement!==active)active.focus();
       this.updateTimeline(source,isException?this._date:days[this._day]);
+      this.querySelectorAll('[data-segment]').forEach(b=>b.setAttribute('aria-pressed',String(source[Number(b.dataset.segment)]===this._selectedEntry)));
+    };
+    this.querySelectorAll('[data-key]').forEach(el=>{
+      const entry=source[Number(el.dataset.i)];
+      el.oninput=()=>el.setCustomValidity('');
+      el.onchange=()=>{
+        if(el.dataset.key==='time') {
+          el.setCustomValidity(source.some(row=>row!==entry && row.time===el.value)?'Une plage commence déjà à cette heure.':'');
+        }
+        if (!el.value || !el.checkValidity()) {el.reportValidity();return;}
+        entry[el.dataset.key]=el.value;
+        this._dirty=true; this.querySelector('#save').disabled=false;
+        this.updateTimeline(source,isException?this._date:days[this._day]);
+      };
+      if(el.dataset.key==='time')el.onblur=()=>{
+        el.onchange();
+        if(!el.value || !el.checkValidity()){el.value=entry.time;el.setCustomValidity('');}
+        reorderRows();
+      };
     });
-    this.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{(isException?this._exceptions[this._date]:this._weekly[String(this._day)]).splice(Number(b.dataset.remove),1);this._dirty=true;this.render();});
-    this.querySelector('#add').onclick=()=>{const entries=isException?this._exceptions[this._date]:this._weekly[String(this._day)];let minute=60;while(entries.some(e=>e.time===`${String(Math.floor(minute/60)).padStart(2,'0')}:${String(minute%60).padStart(2,'0')}`)&&minute<1440)minute+=30;if(minute>=1440)return;entries.push({time:`${String(Math.floor(minute/60)).padStart(2,'0')}:${String(minute%60).padStart(2,'0')}`,profile:Object.keys(this._profiles)[0]});entries.sort((a,b)=>a.time.localeCompare(b.time));this._dirty=true;this.render();};
+    this.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{source.splice(Number(b.dataset.remove),1);this._dirty=true;this.render();});
+    this.querySelector('#add').onclick=()=>{
+      const minute=t=>Number(t.slice(0,2))*60+Number(t.slice(3));
+      const ordered=[...source].sort((a,b)=>a.time.localeCompare(b.time));
+      const selected=ordered.includes(this._selectedEntry)?this._selectedEntry:ordered[ordered.length-1];
+      const candidates=selected?[selected,...ordered.filter(e=>e!==selected)]:[];
+      let value=null,profile=Object.keys(this._profiles)[0];
+      for(const entry of candidates){
+        const i=ordered.indexOf(entry),start=minute(entry.time),end=i+1<ordered.length?minute(ordered[i+1].time):1440;
+        if(end-start>1){value=start+Math.min(30,Math.floor((end-start)/2));profile=entry.profile;break;}
+      }
+      if(value===null){this.querySelector('#status').textContent='Aucun créneau disponible pour ajouter une plage.';return;}
+      const entry={time:`${String(Math.floor(value/60)).padStart(2,'0')}:${String(value%60).padStart(2,'0')}`,profile};
+      source.push(entry);source.sort((a,b)=>a.time.localeCompare(b.time));
+      this._dirty=true;this.render();this.selectSegment(source.indexOf(entry));
+      this.querySelector(`input[data-i="${source.indexOf(entry)}"]`).focus();
+    };
     this.querySelector('#copy').onclick=()=>{const dest=this.querySelector('#copyday').value;this._weekly[dest]=this._weekly[String(this._day)].map(e=>({...e}));this._dirty=true;this.render();};
     this.querySelector('#reload').onclick=()=>{this._loaded=false;this.load();};
     this.querySelector('#save').onclick=async()=>{const status=this.querySelector('#status');try{await this._hass.callWS(isException?{type:'heating_planner/set_exceptions',entry_id:this._entry,exceptions:this._exceptions}:{type:'heating_planner/set_schedule',entry_id:this._entry,weekly:this._weekly});this._dirty=false;this.render();this.querySelector('#status').textContent='✓ Planning enregistré';}catch(e){status.textContent='Erreur : '+e.message;}};
@@ -161,7 +208,7 @@ class HeatingPlannerCard extends HTMLElement {
     const tomorrow=new Date(Date.now()+86400000);
     this.innerHTML=`<ha-card header="Heating Planner · Modes temporaires"><div class="wrap">
       <p>Mode actif : <b>${labels[mode]}</b>${active?' — jusqu’au '+this.escape(new Date(ov.until).toLocaleString('fr-BE')):''}</p>
-      <p class="note">Un seul mode temporaire à la fois. Aucun pilotage du chauffage.</p>
+      <p class="note">Consignes par défaut Absent et Boost : réglables dans les options de l’intégration. La température ci-dessous peut être ajustée pour cette activation. Aucun pilotage du chauffage.</p>
       <div class="actions"><label>Mode <select id="mode"><option value="planning">Planning</option><option value="manual">Manuel</option><option value="boost">Boost</option><option value="away">Absent</option></select></label></div>
       <div id="temporary"><div class="actions"><label>Température (°C) <input id="temperature" type="number" min="5" max="35" step="0.5" value="${this.escape(active?ov.temperature:this._profiles.comfort||21)}"></label>
       <label id="durationlabel">Durée <select id="duration"><option value="30">30 min</option><option value="60">1 h</option><option value="120" selected>2 h</option><option value="240">4 h</option></select></label>
@@ -171,7 +218,7 @@ class HeatingPlannerCard extends HTMLElement {
     const $=id=>this.querySelector('#'+id);
     $('mode').value=mode;
     const toggle=()=>{$('temporary').style.display=$('mode').value==='planning'?'none':'';$('durationlabel').style.display=$('mode').value==='away'?'none':'';$('untillabel').style.display=$('mode').value==='away'?'':'none';};
-    $('mode').onchange=()=>{if($('mode').value==='boost')$('temperature').value=this._profiles.comfort||21;if($('mode').value==='away')$('temperature').value=this._profiles.night||17;toggle();};toggle();
+    $('mode').onchange=()=>{if(['boost','away'].includes($('mode').value))$('temperature').value=this._modeTemperatures?.[$('mode').value] ?? ($('mode').value==='away'?15:21);toggle();};toggle();
     const send=async value=>{try{await this._hass.callWS({type:'heating_planner/set_mode',entry_id:this._entry,override:value});this._override=value;this.renderModes();$('status').textContent='✓ Mode enregistré';}catch(e){$('status').textContent='Erreur : '+e.message;}};
     $('apply').onclick=()=>{const m=$('mode').value;if(m==='planning'){send({mode:'planning'});return;}const temperature=Number($('temperature').value);let until;if(m==='away'){until=new Date($('until').value);}else{until=new Date(Date.now()+Number($('duration').value)*60000);}if(!Number.isFinite(temperature)||Number.isNaN(until.getTime())){$('status').textContent='Température ou échéance invalide';return;}send({mode:m,temperature,until:until.toISOString()});};
     $('cancel').onclick=()=>send({mode:'planning'});

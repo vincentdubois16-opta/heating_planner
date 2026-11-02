@@ -61,6 +61,10 @@ async def ws_get(hass, connection, msg):
         "profiles": entry.options.get("profiles", DEFAULT_PROFILES),
         "effective": {key: value.isoformat() if hasattr(value, "isoformat") else value
                       for key, value in (obj["coordinator"].data or {}).items()},
+        "mode_temperatures": {
+            "away": entry.options.get("away_temperature", 15.0),
+            "boost": entry.options.get("boost_temperature", entry.options.get("profiles", DEFAULT_PROFILES).get("comfort", 21.0)),
+        },
         "readonly": True,
         "preheat_minutes": entry.options.get("preheat_minutes", 0),
         "override": copy.deepcopy(obj["override"]),

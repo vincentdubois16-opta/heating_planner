@@ -27,6 +27,9 @@ class HeatingPlannerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         if user_input is not None:
             return self.async_create_entry(title="", data={
+                **self.config_entry.options,
+                "away_temperature": float(user_input["away_temperature"]),
+                "boost_temperature": float(user_input["boost_temperature"]),
                 "profiles": {k: float(user_input[k]) for k in DEFAULT_PROFILES},
                 "preheat_minutes": int(user_input["preheat_minutes"])
             })
@@ -37,4 +40,6 @@ class HeatingPlannerOptionsFlow(config_entries.OptionsFlow):
             for key, value in DEFAULT_PROFILES.items()
         }
         schema[vol.Required("preheat_minutes", default=int(self.config_entry.options.get("preheat_minutes", 0)))] = vol.All(vol.Coerce(int), vol.Range(min=0, max=360))
+        for key, default in (("away_temperature", 15.0), ("boost_temperature", float(existing.get("comfort", 21.0)))):
+            schema[vol.Required(key, default=float(self.config_entry.options.get(key, default)))] = vol.All(vol.Coerce(float), vol.Range(min=5, max=35))
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))

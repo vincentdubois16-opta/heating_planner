@@ -1,0 +1,27 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Heating Planner",
+        "data": {
+          "name": "Nom de la zone"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Températures et préchauffage",
+        "data": {
+          "night": "Nuit (°C)",
+          "eco": "Éco (°C)",
+          "comfort": "Confort (°C)",
+          "preheat_minutes": "Préchauffage (minutes)",
+          "away_temperature": "Consigne Absent (°C)",
+          "boost_temperature": "Consigne Boost (°C)"
+        }
+      }
+    }
+  }
+}
