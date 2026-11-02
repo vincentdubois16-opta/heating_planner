@@ -1,8 +1,9 @@
-/* Heating Planner v0.8.3 — lightweight Lovelace weekly editor, no external dependencies. */
+/* Heating Planner v0.8.4 — lightweight Lovelace weekly editor, no external dependencies. */
 class HeatingPlannerCard extends HTMLElement {
   setConfig(config) { this.config = config; }
   set hass(hass) {
     this._hass = hass;
+    if (this._loaded && this._tab === "overview") this.renderOverview();
     if (this._loaded && this._tab === 'overview' && !this._refreshing && Date.now()-(this._lastRefresh||0)>15000) this.refreshOverview();
     if (!this._loaded && !this._loading) this.load();
   }
@@ -187,16 +188,35 @@ class HeatingPlannerCard extends HTMLElement {
     const effective=this._effective||{};
     const temp=effective.target;
     const actual=this._hass.states[this.config.temperature_entity];
-    const heat=this._hass.states[this.config.heating_entity];
-    const heating=heat?.attributes?.hvac_action || (heat?.state==='on'?'heating':heat?.state==='off'?'off':null);
-    const stateLabel={heating:'En chauffe',idle:'Au repos',off:'Arrêté'}[heating]||'Non connecté';
+    const valid=entity=>entity && !['unknown','unavailable'].includes(entity.state);
+    const raw=valid(actual)?(this.config.temperature_attribute?actual.attributes?.[this.config.temperature_attribute]:this.config.temperature_entity?.startsWith('climate.')?actual.attributes?.current_temperature:actual.state):null;
+    const format=value=>value!==null && value!==undefined && value!=='' && Number.isFinite(Number(value))?Number(value).toLocaleString('fr-BE',{minimumFractionDigits:1,maximumFractionDigits:1}):'—';
+    const heatId=this.config.heating_entity || (this.config.temperature_entity?.startsWith('climate.')?this.config.temperature_entity:null);
+    const heat=this._hass.states[heatId];
+    const action=valid(heat)?heat.attributes?.hvac_action:null;
+    const heating=action || (valid(heat) && !heatId?.startsWith('climate.')?(heat.state==='on'?'heating':heat.state==='off'?'off':null):null);
+    const stateLabel=!heatId?'État de chauffe non renseigné':!valid(heat)?'État de chauffe indisponible':({heating:'Chauffe',idle:'Au repos',off:'Arrêté'}[heating]||'État de chauffe inconnu');
     const modeLabel=names[effective.active_mode]||'Indisponible';
-    const next=effective.next_change?new Date(effective.next_change).toLocaleString('fr-BE')+' → '+effective.next_target+' °C':'Aucun changement annoncé';
-    const until=active?' · jusqu’au '+new Date(this._override.until).toLocaleString('fr-BE'):'';
-    this.innerHTML=`<ha-card><div class="hp-home"><div class="hp-eyebrow">HEATING PLANNER · PRÉVERSION</div><h2>${esc(this._name)}</h2><div class="hp-grid"><div class="hp-metric"><span>Consigne effective</span><strong>${esc(temp)} °C</strong><small>${esc(modeLabel)}${effective.preheat_active?" · Préchauffage":""}</small></div><div class="hp-metric"><span>Température actuelle</span><strong>${esc(actual && !["unknown","unavailable"].includes(actual.state)?actual.state:null)} °C</strong><small>${esc(stateLabel)}</small></div></div><p class="hp-help">Prochain changement : ${esc(next)}</p><div class="hp-buttons"><button id="home-modes" class="hp-primary">🌡️ Manuel / Boost / Absent</button><button id="home-week">📅 Planning</button><button id="home-exceptions">📆 Exceptions</button><button id="home-wakes">⏰ Réveils</button></div><h3>Planning du jour</h3>${this.timeline(rows,'Aujourd’hui')}<p class="hp-help">Clique sur une plage pour l’éditer. Aucun pilotage OPTA.</p></div></ha-card><style>
-    .hp-home{padding:20px;color:var(--primary-text-color)}.hp-eyebrow{font-size:11px;letter-spacing:.12em;opacity:.65}.hp-home h2{margin:8px 0 18px;font-size:24px}.hp-home h3{margin:22px 0 8px;font-size:16px}.hp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.hp-metric{background:var(--secondary-background-color,#f4f5f7);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:9px}.hp-metric span{font-size:12px;opacity:.75}.hp-metric strong{font-size:35px}.hp-metric small{opacity:.75}.hp-buttons{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}.hp-buttons button{font:inherit;border:1px solid var(--divider-color,#ccc);border-radius:10px;padding:12px;min-height:44px;cursor:pointer;background:var(--card-background-color,#fff);color:var(--primary-text-color)}.hp-buttons .hp-primary{background:var(--primary-color,#03a9f4);color:white}.hp-help{font-size:12px;opacity:.7;line-height:1.5}.hp-timeline{display:flex;height:48px;overflow:hidden;border-radius:10px;border:1px solid var(--divider-color,#ddd);margin:14px 0 5px}.hp-segment{min-width:0;border:0;border-right:1px solid #ffffff55;border-radius:0;padding:0 2px;color:#15212c;font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.hp-night{background:#91b7e5}.hp-eco{background:#9ad9b0}.hp-comfort{background:#f5bc79}.hp-ticks{display:flex;justify-content:space-between;font-size:11px;opacity:.7}.hp-legend{font-size:12px;opacity:.85;margin-top:7px}</style>`;
+    const subtitles={planning:'Planning automatique',manual:'Mode manuel',boost:'Mode Boost',away:'Mode Absent'};
+    const change=effective.next_change?new Date(effective.next_change):null;
+    const when=change && !Number.isNaN(change.getTime())?(change.toLocaleDateString('en-CA')===iso?'':change.toLocaleDateString('fr-BE')+' · ')+change.toLocaleTimeString('fr-BE',{hour:'2-digit',minute:'2-digit'}):null;
+    const next=when?when+' → '+format(effective.next_target)+' °C':'Aucun changement annoncé';
+    this.innerHTML=`<ha-card><div class="hp-home">
+      <div class="hp-heading"><div><h2>${esc(this.config.name||this._name)}</h2><p class="hp-subtitle">Chauffage · ${esc(subtitles[effective.active_mode]||'Mode indisponible')}</p></div><span class="hp-badge ${heating==='heating'?'hp-heating':''}" role="status">${esc(stateLabel)}</span></div>
+      <div class="hp-grid"><div class="hp-metric"><span>Température actuelle</span><strong>${format(raw)} °C</strong></div><div class="hp-metric"><span>Consigne effective</span><strong>${format(temp)} °C</strong></div></div>
+      <div class="hp-next"><div><span>Prochain changement</span><strong>${esc(next)}</strong></div><span class="hp-badge">${esc(modeLabel)}${effective.preheat_active?' · Préchauffage':''}</span></div>
+      <div class="hp-mode-buttons"><button id="home-modes" data-home-mode="manual">Manuel</button><button data-home-mode="boost">Boost</button><button data-home-mode="away">Absent</button></div>
+      <div class="hp-buttons"><button id="home-week">Planning</button><button id="home-exceptions">Exceptions</button><button id="home-wakes">Réveils</button></div>
+      <h3>Planning du jour</h3>${this.timeline(rows,'Aujourd’hui')}<p class="hp-help">Clique sur une plage pour l’éditer. Aucun pilotage OPTA.</p>
+      </div></ha-card><style>
+      .hp-home{padding:20px;color:var(--primary-text-color);font-family:inherit}.hp-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}.hp-home h2{margin:0;font-size:26px}.hp-subtitle{margin:4px 0 0;font-size:14px;color:var(--secondary-text-color)}.hp-home h3{font-size:16px;margin-top:24px}.hp-badge{border-radius:20px;padding:5px 10px;font-size:12px;background:var(--secondary-background-color,#eee);white-space:normal}.hp-heating{color:var(--success-color,#4caf50);background:#4caf5020}.hp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.hp-metric{border-radius:18px;background:var(--secondary-background-color,#f4f5f7);padding:18px 14px;display:flex;flex-direction:column;gap:12px}.hp-metric span,.hp-next>div>span{font-size:14px;color:var(--secondary-text-color)}.hp-metric strong{font-size:clamp(24px,6vw,40px)}.hp-next{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:18px 0 22px}.hp-next>div{display:flex;flex-direction:column;gap:6px}.hp-next strong{font-size:15px}.hp-mode-buttons{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;border-top:1px solid var(--divider-color,#ddd);padding-top:20px}.hp-home button{font:inherit;cursor:pointer;color:var(--primary-text-color);background:var(--secondary-background-color,#eee);border:1px solid var(--divider-color,#ddd);padding:11px 8px;border-radius:24px;min-height:44px}.hp-mode-buttons button:first-child{background:var(--primary-color,#03a9f4);color:var(--text-primary-color,#fff)}.hp-buttons{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.hp-help{font-size:12px;color:var(--secondary-text-color);line-height:1.5}.hp-home .hp-segment{min-height:0;padding:0 2px;border:0;border-right:1px solid #ffffff55;border-radius:0;color:#15212c;font-size:11px}.hp-home .hp-night{background:#91b7e5}.hp-home .hp-eco{background:#9ad9b0}.hp-home .hp-comfort{background:#f5bc79}.hp-home button:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
+      .hp-timeline{display:flex;height:48px;overflow:hidden;border-radius:10px;border:1px solid var(--divider-color,#ddd);margin:14px 0 5px}.hp-segment{min-width:0;border:0;border-right:1px solid #ffffff55;border-radius:0;padding:0 2px;color:#15212c;font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.hp-night{background:#91b7e5}.hp-eco{background:#9ad9b0}.hp-comfort{background:#f5bc79}.hp-ticks{display:flex;justify-content:space-between;font-size:11px;opacity:.7}.hp-legend{font-size:12px;opacity:.85;margin-top:7px}</style>`;
     this.querySelectorAll('[data-segment]').forEach(b=>b.onclick=()=>{this._day=today;this._tab=this._exceptions[iso]?'exceptions':'weekly';this._date=iso;this.render();this.selectSegment(Number(b.dataset.segment));});
-    for(const [id,tab] of [['home-modes','modes'],['home-week','weekly'],['home-exceptions','exceptions'],['home-wakes','wakes']])this.querySelector('#'+id).onclick=()=>{this._tab=tab;this.render();};
+    this.querySelectorAll('[data-home-mode]').forEach(b=>b.onclick=()=>{
+      this._tab='modes';this.render();
+      const mode=this.querySelector('#mode');mode.value=b.dataset.homeMode;mode.onchange();
+    });
+    for(const [id,tab] of [['home-week','weekly'],['home-exceptions','exceptions'],['home-wakes','wakes']])this.querySelector('#'+id).onclick=()=>{this._tab=tab;this.render();};
   }
 
   renderModes() {

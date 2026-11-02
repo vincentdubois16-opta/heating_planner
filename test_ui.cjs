@@ -33,7 +33,7 @@ await page.locator('#status').click();
 if(await page.locator('input[data-i="2"]').inputValue()!=='23:00')throw Error('duplicate rejection');
 console.log('PASS: tri après saisie, ajout contextuel, profil/suppression après tri, rejet doublon');
 await page.locator('#taboverview').click();
-if(!(await page.textContent('body')).includes('22 °C'))throw Error('effective target');
+if(!(await page.textContent('body')).includes('22,0 °C'))throw Error('effective target');
 await page.locator('[data-segment="1"]').click();
 if(await page.locator('.hp-row-focus').count()!==1)throw Error('home editing');
 await page.locator('#tabmodes').click();
@@ -50,7 +50,24 @@ console.log('PASS: Absent 15, Boost configurable 24, activation ajustable 23');
 await page.locator('#back').click();
 await page.locator('#tabexceptions').click();await page.locator('#tabwakes').click();
 console.log('PASS: focus, selection unique, consigne effective, frise accueil, exceptions et reveils');
+await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c.config={name:'Chambre Max',temperature_entity:'climate.chambre'};c._hass.states={'climate.chambre':{state:'heat',attributes:{current_temperature:16.6,hvac_action:'heating'}}};c._tab='overview';c.render();});
+if(!(await page.textContent('body')).includes('16,6 °C'))throw Error('climate current_temperature');
+if(await page.locator('.hp-heading .hp-badge').textContent()!=='Chauffe')throw Error('hvac action');
+await page.locator('[data-home-mode="away"]').click();
+if(await page.locator('#mode').inputValue()!=='away' || await page.locator('#temperature').inputValue()!=='15')throw Error('home away button');
+await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c._tab='overview';c.render();});
+await page.setViewportSize({width:390,height:900});
+await page.addStyleTag({content:'body{margin:0;background:#191919;color:#eee;font-family:Arial;--primary-text-color:#eee;--secondary-text-color:#aaa;--secondary-background-color:#242424;--divider-color:#333;--primary-color:#03a9b9}'});
+await page.screenshot({path:require('path').join(__dirname,'home_mobile.png')});
+if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error('mobile overflow');
+await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c.config={temperature_entity:'sensor.room'};c._hass.states={'sensor.room':{state:'16.6',attributes:{}}};c.render();});
+if(await page.locator('.hp-heading .hp-badge').textContent()!=='État de chauffe non renseigné')throw Error('unconfigured state');
+await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c.config={temperature_entity:'climate.room'};c._hass.states={'climate.room':{state:'unavailable',attributes:{current_temperature:20,hvac_action:'heating'}}};c.render();});
+if(await page.locator('.hp-heading .hp-badge').textContent()!=='État de chauffe indisponible')throw Error('unavailable');
+if(!(await page.locator('.hp-metric').first().textContent()).includes('—'))throw Error('stale temp');
+console.log('PASS: climate, état réel, valeurs indisponibles, bouton Absent, largeur mobile');
 await browser.close();
 })();
+
 
 
