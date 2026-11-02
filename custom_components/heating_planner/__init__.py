@@ -15,7 +15,7 @@ from .const import DOMAIN, DEFAULT_PROFILES, DEFAULT_SCHEDULE
 from .schedule_engine import calculate, validate_schedule, validate_exceptions
 from .wake_engine import validate_wakes
 from .preheat_engine import calculate_with_preheat
-from .dynamic_preheat import calculate_dynamic
+from .dynamic_preheat import calculate_dynamic, normalize_slope
 from .override_engine import validate_override, apply_override
 
 _LOGGER = logging.getLogger(__name__)
@@ -238,7 +238,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 hass.data[f"{DOMAIN}_wakes"], entry.entry_id, entry.options.get("preheat_minutes", 0),
                 entry.options.get("max_preheat_minutes", 180),
                 reading(entry.options.get("temperature_entity", "sensor.temperature_chambre_max")),
-                reading(entry.options.get("slope_entity", "input_number.max_bedroom_slope")),
+                normalize_slope(reading(entry.options.get("slope_entity", "input_number.max_bedroom_slope")), entry.options.get("slope_unit", "hour")),
                 dynamic_cache if apply_override(base, state["override"], now)["active_mode"] == "planning" else {})
         effective = apply_override(base, state["override"], now)
         if effective["active_mode"] != "planning":

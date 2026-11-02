@@ -12,6 +12,15 @@ def positive(value):
         return None
 
 
+def normalize_slope(value, unit="hour"):
+    """Convert the configured source unit to degrees Celsius per hour."""
+    number = positive(value)
+    if number is None or unit not in ("hour", "minute"):
+        return None
+    result = number * (60 if unit == "minute" else 1)
+    return positive(result)
+
+
 def calculate_dynamic(now, timezone, profiles, weekly, exceptions, wakes, zone,
                       fixed_minutes, maximum, temperature, slope, cache):
     maximum = max(0, min(360, int(maximum)))

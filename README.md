@@ -1,4 +1,4 @@
-# Heating Planner v0.9.0 — Préchauffage dynamique
+# Heating Planner v0.9.1 — Préchauffage dynamique
 
 ## Installation depuis v0.8.x
 1. Effectuer une sauvegarde Home Assistant.
@@ -49,3 +49,9 @@ Aucune commande OPTA, aucun appel de service climate/switch et aucune écriture 
 Pas de validation sur une installation Home Assistant réelle. Après installation, activer le calcul et comparer l’heure prévue avec un objectif connu, sans connecter de commande OPTA.
 
 Pour exécuter les tests Python autonomes, se placer à la racine du ZIP : `python test_dynamic_preheat.py` et `python test_preheat_regression.py`. Le test navigateur nécessite Node.js, Playwright et Chrome (`node test_ui.cjs`).
+
+## Correction v0.9.1 : unité de vitesse
+Une vitesse de 0,028 °C/min correspond à 1,68 °C/h. La v0.9.0 interprétait toute valeur comme °C/h, ce qui pouvait déclencher le plafond de 180 minutes.
+Après installation et redémarrage, ouvrir les options Heating Planner et sélectionner l’unité de la valeur de vitesse : minute (°C/min) si l’assistant contient 0,028 par minute ; hour (°C/h) s’il contient 1,68 par heure. Le défaut reste hour pour préserver les configurations existantes. Aucune détection par l’ordre de grandeur ni modification de l’assistant n’est faite.
+L’affichage et le calcul utilisent ensuite la valeur convertie en °C/h. La valeur source et son unité doivent être cohérentes. Avec 16,6 °C, une cible de 21 °C et 1,68 °C/h, la durée non plafonnée est de 158 minutes. Un préchauffage déjà commencé peut conserver sa durée jusqu’à l’échéance ; enregistrer le réglage d’unité réinitialise cette anticipation.
+Tests Python de conversion, bornes, secours et calcul : OK. Tests de préchauffage fixe et Chrome : OK. Pas de validation sur Home Assistant réel. Aucune commande OPTA.

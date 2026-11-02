@@ -30,3 +30,12 @@ from heating_planner.override_engine import apply_override
 ov={'mode':'away','temperature':15,'until':(now+timedelta(hours=4)).isoformat()}
 r=apply_override(r,ov,now);assert r['target']==15 and not r['preheat_active']
 print('PASS : réveil prioritaire et mode Absent prioritaire sur préchauffage')
+
+from heating_planner.dynamic_preheat import normalize_slope
+assert abs(normalize_slope(0.028, "minute")-1.68) < 1e-10
+assert normalize_slope(1.68, "hour")==1.68
+assert normalize_slope(0.028)==0.028
+for unit in ["hour","minute"]:
+ for value in [None,0,-1,"nan","inf"]:assert normalize_slope(value,unit) is None
+r=calc(slope=normalize_slope(.028,"minute"));assert r['dynamic_minutes']==143
+print('PASS unités : 0.028 °C/min = 1.68 °C/h, compatibilité horaire et calcul corrigé')
