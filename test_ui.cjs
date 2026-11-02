@@ -66,8 +66,41 @@ await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');
 if(await page.locator('.hp-heading .hp-badge').textContent()!=='État de chauffe indisponible')throw Error('unavailable');
 if(!(await page.locator('.hp-metric').first().textContent()).includes('—'))throw Error('stale temp');
 console.log('PASS: climate, état réel, valeurs indisponibles, bouton Absent, largeur mobile');
+for(const mode of ['planning','manual','boost','away']){
+ await page.evaluate(mode=>{const c=document.querySelector('heating-planner-card');c._effective.active_mode=mode;c._tab='overview';c.render();},mode);
+ const selected=await page.locator('[data-home-mode][aria-pressed="true"]').evaluateAll(xs=>xs.map(x=>x.dataset.homeMode));
+ if(JSON.stringify(selected)!==JSON.stringify(mode==='planning'?[]:[mode]))throw Error('active button '+mode);
+ const colors=await page.locator('[data-home-mode]').evaluateAll(xs=>xs.map(x=>({mode:x.dataset.homeMode,color:getComputedStyle(x).backgroundColor})));
+ if(mode==='away' && colors.find(x=>x.mode==='away').color===colors.find(x=>x.mode==='manual').color)throw Error('active color');
+}
+console.log('PASS : couleur et sélection des modes Planning, Manuel, Boost, Absent');
+for(const [state,action,label] of [['off',null,'Arrêté'],['heat',null,'Chauffage activé'],['heat','heating','Chauffe'],['heat','idle','Au repos'],['unavailable','heating','État de chauffe indisponible']]){
+ await page.evaluate(({state,action})=>{const c=document.querySelector('heating-planner-card');c.config={temperature_entity:'sensor.temperature_chambre_max',heating_entity:'climate.climate_max_bedroom'};c._hass.states={'sensor.temperature_chambre_max':{state:'16.6',attributes:{}},'climate.climate_max_bedroom':{state,attributes:action?{hvac_action:action}:{preset_mode:'away',temperature:15}}};c._tab='overview';c.render();},{state,action});
+ if(await page.locator('.hp-heading .hp-badge').textContent()!==label)throw Error('climate state '+state+'/'+action);
+}
+console.log('PASS : configuration utilisateur, climate off/heat, priorité hvac_action, indisponibilité');
+for(const width of [390,1000]){
+ await page.setViewportSize({width,height:900});
+ for(const tab of ['overview','weekly']){
+ await page.evaluate(tab=>{const c=document.querySelector('heating-planner-card');const rows=[{time:'00:00',profile:'night'},{time:'06:00',profile:'comfort'},{time:'07:00',profile:'eco'},{time:'12:00',profile:'comfort'},{time:'13:00',profile:'eco'},{time:'18:00',profile:'comfort'},{time:'23:59',profile:'night'}];c._weekly=Object.fromEntries(Array.from({length:7},(_,i)=>[i,rows.map(e=>({...e}))]));c._day=0;c._tab=tab;c.render();},tab);
+ const errors=await page.evaluate(()=>{
+ const bar=document.querySelector('.hp-timeline').getBoundingClientRect(),inner=bar.width-2,left=bar.left+1;
+ const expected=[0,360,420,720,780,1080,1439,1440];
+ const segments=[...document.querySelectorAll('[data-segment]')];
+ const diffs=segments.flatMap((el,i)=>{const r=el.getBoundingClientRect();return [Math.abs(r.left-(left+inner*expected[i]/1440)),Math.abs(r.right-(left+inner*expected[i+1]/1440))];});
+ const ticks=[...document.querySelectorAll('.hp-ticks span')];
+ for(const i of [1,2,3]){const r=ticks[i].getBoundingClientRect();diffs.push(Math.abs((r.left+r.right)/2-(left+inner*i/4)));}
+ return diffs.filter(x=>x>0.2);
+ });
+ if(errors.length)throw Error('timeline geometry '+width+'/'+tab+' '+errors);
+ }
+}
+console.log('PASS : positions et largeurs exactes des plages et repères, mobile/ordinateur, accueil/éditeur');
 await browser.close();
 })();
+
+
+
 
 
 
