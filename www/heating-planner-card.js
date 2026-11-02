@@ -1,4 +1,4 @@
-/* Heating Planner v0.7 — lightweight Lovelace weekly editor, no external dependencies. */
+/* Heating Planner v0.8 — lightweight Lovelace weekly editor, no external dependencies. */
 class HeatingPlannerCard extends HTMLElement {
   setConfig(config) { this.config = config; }
   set hass(hass) {
@@ -16,7 +16,7 @@ class HeatingPlannerCard extends HTMLElement {
       this._override = data.override || {mode:"planning"};
       this._weekly = data.weekly;
       this._exceptions = data.exceptions || {};
-      this._tab = "weekly";
+      this._tab = "overview";
       const wakes = await this._hass.callWS({type:"heating_planner/get_wakes"});
       this._wakes = wakes.events; this._zones = wakes.zones; this._wakeIdx = 0; this._wakeDay = 0;
       this._date = new Date().toLocaleDateString("en-CA");
@@ -31,12 +31,14 @@ class HeatingPlannerCard extends HTMLElement {
   }
   escape(s) { return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   render() {
+    if (this._tab === "overview") { this.renderOverview(); return; }
     if (this._tab === "wakes") { this.renderWakes(); return; }
     if (this._tab === "modes") { this.renderModes(); return; }
     const days = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
     const profiles = Object.keys(this._profiles);
     const isException = this._tab === 'exceptions';
     const source = isException ? (this._exceptions[this._date] || []) : this._weekly[String(this._day)];
+    const timeline = this.timeline(source, isException ? this._date : days[this._day]);
     const rows = source.map((row,i)=>`<div class="row">
       <input aria-label="Heure" type="time" value="${this.escape(row.time)}" data-i="${i}" data-key="time" ${i===0?'disabled':''}>
       <select aria-label="Profil" data-i="${i}" data-key="profile">${profiles.map(p=>`<option value="${this.escape(p)}" ${p===row.profile?'selected':''}>${this.escape(p)} (${this._profiles[p]}°C)</option>`).join('')}</select>
@@ -44,19 +46,21 @@ class HeatingPlannerCard extends HTMLElement {
     </div>`).join('');
     this.innerHTML = `<ha-card header="Heating Planner · ${this.escape(this._name)}"><div class="wrap">
       <p class="note">Édition des horaires de démonstration · aucun pilotage du chauffage · Préchauffage : ${this._preheatMinutes} min (réglage dans les options de l’intégration)</p>
-      <div class="actions"><button id="tabweekly" class="${!isException?'active':''}">Semaine</button><button id="tabexceptions" class="${isException?'active':''}">Exceptions datées</button><button id="tabwakes">Réveils</button><button id="tabmodes">Modes</button></div>
+      <div class="actions"><button id="taboverview">Accueil</button><button id="tabweekly" class="${!isException?'active':''}">Semaine</button><button id="tabexceptions" class="${isException?'active':''}">Exceptions datées</button><button id="tabwakes">Réveils</button><button id="tabmodes">Modes</button></div>
       ${isException ? `<div class="actions"><label>Date <input id="exceptiondate" type="date" value="${this.escape(this._date)}"></label><button id="newexception">Créer depuis la semaine</button><button id="deleteexception" ${this._exceptions[this._date]?'':'disabled'}>Supprimer l'exception</button></div><p class="note">${this._exceptions[this._date]?'Exception active : les horaires ci-dessous remplacent ceux du jour habituel.':'Aucune exception pour cette date : le planning hebdomadaire s’applique.'}</p><p class="note">Dates enregistrées : ${Object.keys(this._exceptions).sort().map(d=>`<button data-exceptiondate="${this.escape(d)}">${this.escape(d)}</button>`).join(' ') || 'aucune'}</p>` : ''}
       <div class="days" style="${isException?'display:none':''}">${days.map((d,i)=>`<button data-day="${i}" class="${i===this._day?'active':''}">${d}</button>`).join('')}</div>
-      <div class="rows">${rows}</div>
+      ${timeline}<div class="rows">${rows}</div>
       <div class="actions"><button id="add" ${isException&&!this._exceptions[this._date]?'disabled':''}>+ Plage</button><label style="${isException?'display:none':''}">Copier vers <select id="copyday">${days.map((d,i)=>i===this._day?'':`<option value="${i}">${d}</option>`).join('')}</select></label><button id="copy" style="${isException?'display:none':''}">Copier</button></div>
       <div class="actions"><button id="save" class="primary" ${this._dirty?'':'disabled'}>${isException?"Enregistrer les exceptions":"Enregistrer les 7 jours"}</button><button id="reload">Annuler</button></div>
       <p id="status" role="status"></p>
     </div></ha-card><style>
-      .wrap{padding:0 16px 16px}.note{font-size:12px;opacity:.75}.days,.actions{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
+      .hp-timeline{display:flex;height:48px;overflow:hidden;border-radius:10px;border:1px solid var(--divider-color,#ddd);margin:14px 0 5px}.hp-segment{min-width:0;border:0;border-right:1px solid #ffffff55;border-radius:0;padding:0 2px;color:#15212c;font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.hp-segment:focus-visible{outline:3px solid var(--primary-color);outline-offset:-3px}.hp-night{background:#91b7e5}.hp-eco{background:#9ad9b0}.hp-comfort{background:#f5bc79}.hp-ticks{display:flex;justify-content:space-between;font-size:11px;opacity:.7}.hp-legend{font-size:12px;opacity:.85;margin-top:7px}.hp-row-focus{outline:2px solid var(--primary-color);border-radius:8px}.wrap{padding:0 16px 16px}.note{font-size:12px;opacity:.75}.days,.actions{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
       button,select,input{font:inherit;border:1px solid var(--divider-color,#aaa);border-radius:7px;padding:8px;background:var(--card-background-color,#fff);color:var(--primary-text-color,#222)}
       button{cursor:pointer}.active,.primary{background:var(--primary-color,#03a9f4);color:white}.row{display:flex;gap:8px;margin:7px 0}.row select{flex:1;min-width:0}.row input{width:110px;box-sizing:border-box}
       button:disabled{opacity:.45;cursor:default}#status{font-size:13px;min-height:1em}
     </style>`;
+    this.querySelector('#taboverview').onclick=()=>{this._tab='overview';this.render();};
+    this.querySelectorAll('[data-segment]').forEach(b=>b.onclick=()=>{const row=this.querySelectorAll('.row')[Number(b.dataset.segment)];if(row){row.classList.add('hp-row-focus');row.scrollIntoView({behavior:'smooth',block:'nearest'});row.querySelector('select')?.focus();}});
     this.querySelector('#tabweekly').onclick=()=>{this._tab='weekly';this._dirty=false;this.render();};
     this.querySelector('#tabexceptions').onclick=()=>{this._tab='exceptions';this._dirty=false;this.render();};
     this.querySelector('#tabwakes').onclick=()=>{this._tab="wakes";this.render();};
@@ -81,6 +85,35 @@ class HeatingPlannerCard extends HTMLElement {
     this.querySelector('#reload').onclick=()=>{this._loaded=false;this.load();};
     this.querySelector('#save').onclick=async()=>{const status=this.querySelector('#status');try{await this._hass.callWS(isException?{type:'heating_planner/set_exceptions',entry_id:this._entry,exceptions:this._exceptions}:{type:'heating_planner/set_schedule',entry_id:this._entry,weekly:this._weekly});this._dirty=false;this.render();this.querySelector('#status').textContent='✓ Planning enregistré';}catch(e){status.textContent='Erreur : '+e.message;}};
   }
+
+  profileClass(profile) {
+    const p=String(profile).toLowerCase();
+    return p.includes('night')||p.includes('nuit')?'hp-night':p.includes('eco')||p.includes('éco')?'hp-eco':'hp-comfort';
+  }
+  timeline(entries, label) {
+    const ordered=[...(entries||[])].map((e,i)=>({...e,idx:i})).sort((a,b)=>a.time.localeCompare(b.time));
+    const minute=t=>{const m=/^(\d{2}):(\d{2})$/.exec(t||'');return m?Math.min(1440,Number(m[1])*60+Number(m[2])):0;};
+    const segments=ordered.map((e,i)=>{const start=minute(e.time),end=i+1<ordered.length?minute(ordered[i+1].time):1440;const duration=Math.max(0,end-start);return `<button type="button" class="hp-segment ${this.profileClass(e.profile)}" data-segment="${e.idx}" style="flex:${duration} 1 0" title="${this.escape(e.time)}–${String(Math.floor(end/60)).padStart(2,'0')}:${String(end%60).padStart(2,'0')} · ${this.escape(e.profile)}" aria-label="Modifier ${this.escape(e.profile)} à ${this.escape(e.time)}">${duration>=100?this.escape(e.profile):''}</button>`;}).join('');
+    return `<div class="hp-legend"><b>${this.escape(label)}</b> · Sélectionne une plage pour modifier son horaire ou son profil</div><div class="hp-timeline">${segments}</div><div class="hp-ticks"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div><div class="hp-legend">🟦 Nuit &nbsp; 🟩 Éco &nbsp; 🟧 Confort</div>`;
+  }
+  renderOverview() {
+    const esc=v=>this.escape(v??'—');
+    const mode=this._override?.mode||'planning';
+    const active=mode!=='planning'&&this._override.until&&new Date(this._override.until)>new Date();
+    const currentMode=active?mode:'planning';
+    const names={planning:'Planning',manual:'Manuel',boost:'Boost',away:'Absent'};
+    const today=(new Date().getDay()+6)%7;
+    const iso=new Date().toLocaleDateString('en-CA');
+    const rows=this._exceptions[iso]||this._weekly[String(today)]||[];
+    const now=new Date();const hm=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
+    const base=[...rows].filter(r=>r.time<=hm).sort((a,b)=>b.time.localeCompare(a.time))[0]||rows[0];
+    const temp=active?this._override.temperature:this._profiles[base?.profile];
+    const until=active?' · jusqu’au '+new Date(this._override.until).toLocaleString('fr-BE'):'';
+    this.innerHTML=`<ha-card><div class="hp-home"><div class="hp-eyebrow">HEATING PLANNER · PRÉVERSION</div><h2>${esc(this._name)}</h2><div class="hp-grid"><div class="hp-metric"><span>Consigne indicative du planning*</span><strong>${esc(temp)} °C</strong><small>${esc(names[currentMode])}${esc(until)}</small></div><div class="hp-metric"><span>Profil du jour</span><strong style="font-size:24px">${esc(base?.profile)}</strong><small>${this._exceptions[iso]?'Exception datée':'Semaine habituelle'}</small></div></div><p class="hp-help">* Cette estimation n’inclut pas les réveils ni le préchauffage. La consigne effective fait foi dans les capteurs Heating Planner.</p><div class="hp-buttons"><button id="home-modes" class="hp-primary">🌡️ Manuel / Boost / Absent</button><button id="home-week">📅 Planning</button><button id="home-exceptions">📆 Exceptions</button><button id="home-wakes">⏰ Réveils</button></div><h3>Planning du jour</h3>${this.timeline(rows,'Aujourd’hui')}<p class="hp-help">Lecture seule ici · Clique sur Planning pour modifier les plages. Aucun pilotage OPTA.</p></div></ha-card><style>
+    .hp-home{padding:20px;color:var(--primary-text-color)}.hp-eyebrow{font-size:11px;letter-spacing:.12em;opacity:.65}.hp-home h2{margin:8px 0 18px;font-size:24px}.hp-home h3{margin:22px 0 8px;font-size:16px}.hp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.hp-metric{background:var(--secondary-background-color,#f4f5f7);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:9px}.hp-metric span{font-size:12px;opacity:.75}.hp-metric strong{font-size:35px}.hp-metric small{opacity:.75}.hp-buttons{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}.hp-buttons button{font:inherit;border:1px solid var(--divider-color,#ccc);border-radius:10px;padding:12px;min-height:44px;cursor:pointer;background:var(--card-background-color,#fff);color:var(--primary-text-color)}.hp-buttons .hp-primary{background:var(--primary-color,#03a9f4);color:white}.hp-help{font-size:12px;opacity:.7;line-height:1.5}.hp-timeline{display:flex;height:48px;overflow:hidden;border-radius:10px;border:1px solid var(--divider-color,#ddd);margin:14px 0 5px}.hp-segment{min-width:0;border:0;border-right:1px solid #ffffff55;border-radius:0;padding:0 2px;color:#15212c;font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.hp-night{background:#91b7e5}.hp-eco{background:#9ad9b0}.hp-comfort{background:#f5bc79}.hp-ticks{display:flex;justify-content:space-between;font-size:11px;opacity:.7}.hp-legend{font-size:12px;opacity:.85;margin-top:7px}</style>`;
+    for(const [id,tab] of [['home-modes','modes'],['home-week','weekly'],['home-exceptions','exceptions'],['home-wakes','wakes']])this.querySelector('#'+id).onclick=()=>{this._tab=tab;this.render();};
+  }
+
   renderModes() {
     const ov=this._override||{mode:'planning'};
     const active=ov.mode!=='planning' && ov.until && new Date(ov.until)>new Date();

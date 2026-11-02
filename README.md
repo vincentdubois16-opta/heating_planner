@@ -1,22 +1,20 @@
-# Heating Planner v0.7.0 (préversion)
+# Heating Planner v0.8 — interface graphique
 
-Mise à jour incrémentale de la v0.6.1 fournie par l'utilisateur.
+Mise à jour de la v0.7 : moteur Python et données inchangés.
+
+- Accueil avec accès rapide aux modes, planning, exceptions et réveils.
+- Frise 24 h colorée pour le planning et les exceptions.
+- Clic sur une plage pour accéder à la ligne de modification correspondante.
+- Les heures et profils se modifient via les champs existants, puis Enregistrer.
+
+**Limite connue :** la consigne affichée sur l’accueil est indicative : elle ne tient pas compte des réveils ni du préchauffage. Les capteurs restent la source fiable.
 
 ## Installation
 
 1. Sauvegarder Home Assistant.
-2. Copier `custom_components/heating_planner/` dans `/config/custom_components/heating_planner/` en remplaçant les fichiers.
+2. Copier `custom_components/heating_planner/` dans `/config/custom_components/heating_planner/`.
 3. Copier `www/heating-planner-card.js` dans `/config/www/`.
-4. Redémarrer Home Assistant.
-5. Mettre à jour la ressource Lovelace en `/local/heating-planner-card.js?v=7` (Module JavaScript), puis actualiser la page.
-6. Garder la carte `type: custom:heating-planner-card`.
+4. Redémarrer Home Assistant et changer la ressource en `/local/heating-planner-card.js?v=8`.
+5. Carte : `type: custom:heating-planner-card`.
 
-## Fonctionnement
-
-Nouvel onglet « Modes » : Planning, Manuel (température et durée), Boost (température et durée), Absent (température et date/heure de fin). Le dernier mode choisi remplace le précédent. Retour automatique au planning à l'échéance, y compris les réveils, exceptions et préchauffage. Les réglages sont persistés dans le même stockage que les plannings.
-
-Nouveaux capteurs : `Mode actif`, `Fin du mode temporaire`.
-
-Les commandes sont réservées aux administrateurs. Cette préversion ne commande aucun thermostat, relais, MQTT ou OPTA.
-
-**Limites :** le rafraîchissement des capteurs est effectué chaque minute; la carte ne se rafraîchit pas automatiquement pendant qu'elle est ouverte. Une seule zone de démonstration est disponible tant que le flux de création de zones n'a pas été étendu.
+Aucun contrôle OPTA ajouté.
