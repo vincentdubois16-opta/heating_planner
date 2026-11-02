@@ -1,8 +1,9 @@
-/* Heating Planner v0.8 — lightweight Lovelace weekly editor, no external dependencies. */
+/* Heating Planner v0.8.1 — lightweight Lovelace weekly editor, no external dependencies. */
 class HeatingPlannerCard extends HTMLElement {
   setConfig(config) { this.config = config; }
   set hass(hass) {
     this._hass = hass;
+    if (this._loaded && this._tab === 'overview' && !this._refreshing && Date.now()-(this._lastRefresh||0)>15000) this.refreshOverview();
     if (!this._loaded && !this._loading) this.load();
   }
   async load() {
@@ -12,6 +13,7 @@ class HeatingPlannerCard extends HTMLElement {
       this._entry = this.config.entry_id || zones[0]?.entry_id;
       if (!this._entry) throw Error('Aucune zone Heating Planner');
       const data = await this._hass.callWS({type:'heating_planner/get', entry_id:this._entry});
+      this._effective = data.effective || {};
       this._name = data.name;
       this._override = data.override || {mode:"planning"};
       this._weekly = data.weekly;
@@ -28,6 +30,28 @@ class HeatingPlannerCard extends HTMLElement {
       this.render();
     } catch(e) { this.innerHTML = `<ha-card><div style="padding:16px">Heating Planner : ${this.escape(e.message)}</div></ha-card>`; }
     finally { this._loading = false; }
+  }
+  async refreshOverview() {
+    this._refreshing = true; this._lastRefresh = Date.now();
+    try {
+      const data = await this._hass.callWS({type:'heating_planner/get',entry_id:this._entry});
+      this._effective = data.effective || {};
+      if (this._tab === 'overview') this.renderOverview();
+    } catch (_) { /* Keep the last display; Home Assistant will retry. */ }
+    finally { this._refreshing = false; }
+  }
+  selectSegment(index) {
+    this.querySelectorAll('.hp-row-focus').forEach(row=>row.classList.remove('hp-row-focus'));
+    this.querySelectorAll('[data-segment]').forEach(b=>b.setAttribute('aria-pressed',String(Number(b.dataset.segment)===index)));
+    const row=this.querySelectorAll('.row')[index];
+    if(row){row.classList.add('hp-row-focus');row.scrollIntoView({behavior:'smooth',block:'nearest'});row.querySelector('select')?.focus();}
+  }
+  updateTimeline(source, label) {
+    const old=this.querySelector('.hp-timeline');
+    if (!old) return;
+    const holder=document.createElement('div'); holder.innerHTML=this.timeline(source,label);
+    old.replaceWith(holder.querySelector('.hp-timeline'));
+    this.querySelectorAll('[data-segment]').forEach(b=>b.onclick=()=>this.selectSegment(Number(b.dataset.segment)));
   }
   escape(s) { return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   render() {
@@ -47,7 +71,7 @@ class HeatingPlannerCard extends HTMLElement {
     this.innerHTML = `<ha-card header="Heating Planner · ${this.escape(this._name)}"><div class="wrap">
       <p class="note">Édition des horaires de démonstration · aucun pilotage du chauffage · Préchauffage : ${this._preheatMinutes} min (réglage dans les options de l’intégration)</p>
       <div class="actions"><button id="taboverview">Accueil</button><button id="tabweekly" class="${!isException?'active':''}">Semaine</button><button id="tabexceptions" class="${isException?'active':''}">Exceptions datées</button><button id="tabwakes">Réveils</button><button id="tabmodes">Modes</button></div>
-      ${isException ? `<div class="actions"><label>Date <input id="exceptiondate" type="date" value="${this.escape(this._date)}"></label><button id="newexception">Créer depuis la semaine</button><button id="deleteexception" ${this._exceptions[this._date]?'':'disabled'}>Supprimer l'exception</button></div><p class="note">${this._exceptions[this._date]?'Exception active : les horaires ci-dessous remplacent ceux du jour habituel.':'Aucune exception pour cette date : le planning hebdomadaire s’applique.'}</p><p class="note">Dates enregistrées : ${Object.keys(this._exceptions).sort().map(d=>`<button data-exceptiondate="${this.escape(d)}">${this.escape(d)}</button>`).join(' ') || 'aucune'}</p>` : ''}
+      ${isException ? `<div class="actions"><label>Date <input id="exceptiondate" type="date" value="${this.escape(this._date)}"></label><button id="newexception">Créer depuis la semaine</button><button id="clearpast">Retirer les dates passées</button><button id="deleteexception" ${this._exceptions[this._date]?'':'disabled'}>Supprimer l'exception</button></div><p class="note">${this._exceptions[this._date]?'Exception active : les horaires ci-dessous remplacent ceux du jour habituel.':'Aucune exception pour cette date : le planning hebdomadaire s’applique.'}</p><details><summary>Dates enregistrées</summary><p class="note"> ${Object.keys(this._exceptions).sort().map(d=>`<button data-exceptiondate="${this.escape(d)}">${this.escape(d)}</button>`).join(' ') || 'aucune'}</p></details>` : ''}
       <div class="days" style="${isException?'display:none':''}">${days.map((d,i)=>`<button data-day="${i}" class="${i===this._day?'active':''}">${d}</button>`).join('')}</div>
       ${timeline}<div class="rows">${rows}</div>
       <div class="actions"><button id="add" ${isException&&!this._exceptions[this._date]?'disabled':''}>+ Plage</button><label style="${isException?'display:none':''}">Copier vers <select id="copyday">${days.map((d,i)=>i===this._day?'':`<option value="${i}">${d}</option>`).join('')}</select></label><button id="copy" style="${isException?'display:none':''}">Copier</button></div>
@@ -60,12 +84,13 @@ class HeatingPlannerCard extends HTMLElement {
       button:disabled{opacity:.45;cursor:default}#status{font-size:13px;min-height:1em}
     </style>`;
     this.querySelector('#taboverview').onclick=()=>{this._tab='overview';this.render();};
-    this.querySelectorAll('[data-segment]').forEach(b=>b.onclick=()=>{const row=this.querySelectorAll('.row')[Number(b.dataset.segment)];if(row){row.classList.add('hp-row-focus');row.scrollIntoView({behavior:'smooth',block:'nearest'});row.querySelector('select')?.focus();}});
-    this.querySelector('#tabweekly').onclick=()=>{this._tab='weekly';this._dirty=false;this.render();};
-    this.querySelector('#tabexceptions').onclick=()=>{this._tab='exceptions';this._dirty=false;this.render();};
+    this.querySelectorAll('[data-segment]').forEach(b=>b.onclick=()=>this.selectSegment(Number(b.dataset.segment)));
+    this.querySelector('#tabweekly').onclick=()=>{this._tab='weekly';this.render();};
+    this.querySelector('#tabexceptions').onclick=()=>{this._tab='exceptions';this.render();};
     this.querySelector('#tabwakes').onclick=()=>{this._tab="wakes";this.render();};
     this.querySelector('#tabmodes').onclick=()=>{this._tab="modes";this.render();};
     if (isException) {
+      this.querySelector('#clearpast').onclick=()=>{const today=new Date().toLocaleDateString('en-CA');for(const d of Object.keys(this._exceptions))if(d<today)delete this._exceptions[d];this._dirty=true;this.render();};
       this.querySelector('#exceptiondate').onchange=e=>{this._date=e.target.value;this.render();};
       this.querySelectorAll('[data-exceptiondate]').forEach(b=>b.onclick=()=>{this._date=b.dataset.exceptiondate;this.render();});
       this.querySelector('#newexception').onclick=()=>{
@@ -78,7 +103,12 @@ class HeatingPlannerCard extends HTMLElement {
       this.querySelector('#deleteexception').onclick=()=>{delete this._exceptions[this._date];this._dirty=true;this.render();};
     }
     this.querySelectorAll('[data-day]').forEach(b=>b.onclick=()=>{this._day=Number(b.dataset.day);this.render();});
-    this.querySelectorAll('[data-key]').forEach(el=>el.onchange=()=>{(isException?this._exceptions[this._date]:this._weekly[String(this._day)])[Number(el.dataset.i)][el.dataset.key]=el.value;this._dirty=true;this.render();});
+    this.querySelectorAll('[data-key]').forEach(el=>el.onchange=()=>{
+      if (!el.value || !el.checkValidity()) return;
+      (isException?this._exceptions[this._date]:this._weekly[String(this._day)])[Number(el.dataset.i)][el.dataset.key]=el.value;
+      this._dirty=true; this.querySelector('#save').disabled=false;
+      this.updateTimeline(source,isException?this._date:days[this._day]);
+    });
     this.querySelectorAll('[data-remove]').forEach(b=>b.onclick=()=>{(isException?this._exceptions[this._date]:this._weekly[String(this._day)]).splice(Number(b.dataset.remove),1);this._dirty=true;this.render();});
     this.querySelector('#add').onclick=()=>{const entries=isException?this._exceptions[this._date]:this._weekly[String(this._day)];let minute=60;while(entries.some(e=>e.time===`${String(Math.floor(minute/60)).padStart(2,'0')}:${String(minute%60).padStart(2,'0')}`)&&minute<1440)minute+=30;if(minute>=1440)return;entries.push({time:`${String(Math.floor(minute/60)).padStart(2,'0')}:${String(minute%60).padStart(2,'0')}`,profile:Object.keys(this._profiles)[0]});entries.sort((a,b)=>a.time.localeCompare(b.time));this._dirty=true;this.render();};
     this.querySelector('#copy').onclick=()=>{const dest=this.querySelector('#copyday').value;this._weekly[dest]=this._weekly[String(this._day)].map(e=>({...e}));this._dirty=true;this.render();};
@@ -107,10 +137,18 @@ class HeatingPlannerCard extends HTMLElement {
     const rows=this._exceptions[iso]||this._weekly[String(today)]||[];
     const now=new Date();const hm=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
     const base=[...rows].filter(r=>r.time<=hm).sort((a,b)=>b.time.localeCompare(a.time))[0]||rows[0];
-    const temp=active?this._override.temperature:this._profiles[base?.profile];
+    const effective=this._effective||{};
+    const temp=effective.target;
+    const actual=this._hass.states[this.config.temperature_entity];
+    const heat=this._hass.states[this.config.heating_entity];
+    const heating=heat?.attributes?.hvac_action || (heat?.state==='on'?'heating':heat?.state==='off'?'off':null);
+    const stateLabel={heating:'En chauffe',idle:'Au repos',off:'Arrêté'}[heating]||'Non connecté';
+    const modeLabel=names[effective.active_mode]||'Indisponible';
+    const next=effective.next_change?new Date(effective.next_change).toLocaleString('fr-BE')+' → '+effective.next_target+' °C':'Aucun changement annoncé';
     const until=active?' · jusqu’au '+new Date(this._override.until).toLocaleString('fr-BE'):'';
-    this.innerHTML=`<ha-card><div class="hp-home"><div class="hp-eyebrow">HEATING PLANNER · PRÉVERSION</div><h2>${esc(this._name)}</h2><div class="hp-grid"><div class="hp-metric"><span>Consigne indicative du planning*</span><strong>${esc(temp)} °C</strong><small>${esc(names[currentMode])}${esc(until)}</small></div><div class="hp-metric"><span>Profil du jour</span><strong style="font-size:24px">${esc(base?.profile)}</strong><small>${this._exceptions[iso]?'Exception datée':'Semaine habituelle'}</small></div></div><p class="hp-help">* Cette estimation n’inclut pas les réveils ni le préchauffage. La consigne effective fait foi dans les capteurs Heating Planner.</p><div class="hp-buttons"><button id="home-modes" class="hp-primary">🌡️ Manuel / Boost / Absent</button><button id="home-week">📅 Planning</button><button id="home-exceptions">📆 Exceptions</button><button id="home-wakes">⏰ Réveils</button></div><h3>Planning du jour</h3>${this.timeline(rows,'Aujourd’hui')}<p class="hp-help">Lecture seule ici · Clique sur Planning pour modifier les plages. Aucun pilotage OPTA.</p></div></ha-card><style>
+    this.innerHTML=`<ha-card><div class="hp-home"><div class="hp-eyebrow">HEATING PLANNER · PRÉVERSION</div><h2>${esc(this._name)}</h2><div class="hp-grid"><div class="hp-metric"><span>Consigne effective</span><strong>${esc(temp)} °C</strong><small>${esc(modeLabel)}${effective.preheat_active?" · Préchauffage":""}</small></div><div class="hp-metric"><span>Température actuelle</span><strong>${esc(actual && !["unknown","unavailable"].includes(actual.state)?actual.state:null)} °C</strong><small>${esc(stateLabel)}</small></div></div><p class="hp-help">Prochain changement : ${esc(next)}</p><div class="hp-buttons"><button id="home-modes" class="hp-primary">🌡️ Manuel / Boost / Absent</button><button id="home-week">📅 Planning</button><button id="home-exceptions">📆 Exceptions</button><button id="home-wakes">⏰ Réveils</button></div><h3>Planning du jour</h3>${this.timeline(rows,'Aujourd’hui')}<p class="hp-help">Clique sur une plage pour l’éditer. Aucun pilotage OPTA.</p></div></ha-card><style>
     .hp-home{padding:20px;color:var(--primary-text-color)}.hp-eyebrow{font-size:11px;letter-spacing:.12em;opacity:.65}.hp-home h2{margin:8px 0 18px;font-size:24px}.hp-home h3{margin:22px 0 8px;font-size:16px}.hp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}.hp-metric{background:var(--secondary-background-color,#f4f5f7);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:9px}.hp-metric span{font-size:12px;opacity:.75}.hp-metric strong{font-size:35px}.hp-metric small{opacity:.75}.hp-buttons{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0}.hp-buttons button{font:inherit;border:1px solid var(--divider-color,#ccc);border-radius:10px;padding:12px;min-height:44px;cursor:pointer;background:var(--card-background-color,#fff);color:var(--primary-text-color)}.hp-buttons .hp-primary{background:var(--primary-color,#03a9f4);color:white}.hp-help{font-size:12px;opacity:.7;line-height:1.5}.hp-timeline{display:flex;height:48px;overflow:hidden;border-radius:10px;border:1px solid var(--divider-color,#ddd);margin:14px 0 5px}.hp-segment{min-width:0;border:0;border-right:1px solid #ffffff55;border-radius:0;padding:0 2px;color:#15212c;font-size:11px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.hp-night{background:#91b7e5}.hp-eco{background:#9ad9b0}.hp-comfort{background:#f5bc79}.hp-ticks{display:flex;justify-content:space-between;font-size:11px;opacity:.7}.hp-legend{font-size:12px;opacity:.85;margin-top:7px}</style>`;
+    this.querySelectorAll('[data-segment]').forEach(b=>b.onclick=()=>{this._day=today;this._tab=this._exceptions[iso]?'exceptions':'weekly';this._date=iso;this.render();this.selectSegment(Number(b.dataset.segment));});
     for(const [id,tab] of [['home-modes','modes'],['home-week','weekly'],['home-exceptions','exceptions'],['home-wakes','wakes']])this.querySelector('#'+id).onclick=()=>{this._tab=tab;this.render();};
   }
 
@@ -157,11 +195,11 @@ class HeatingPlannerCard extends HTMLElement {
         <div class="days">${days.map((d,i)=>`<button data-wday="${i}" class="${i===this._wakeDay?'active':''}">${d}</button>`).join('')}</div>
         <label><input type="checkbox" id="wakeenabled" ${slot?'checked':''}> Réveil actif ce jour</label>
         <div class="actions"><label>Début <input id="wakestart" type="time" value="${slot?.start||'06:30'}"></label><label>Fin <input id="wakeend" type="time" value="${slot?.end||'08:00'}"></label></div>
-        <p>Pièces concernées et profil de chaque pièce :</p>${zoneRows}
-        <h4>Modification pour une date précise</h4>
+        <details><summary>Pièces et profils (${Object.keys(e.zones).length})</summary>${zoneRows}</details>
+        <details><summary>Modifier un réveil pour une date précise</summary>
         <div class="actions"><input type="date" id="wakedate" value="${this.escape(this._wakeDate||'')}"><button id="loadwakedate">Voir la date</button><button id="clearwakedate">Revenir au planning habituel</button></div>
         <p id="datehint" class="note"></p><div class="actions"><label>Début <input id="datestart" type="time"></label><label>Fin <input id="dateend" type="time"></label><button id="savedate">Définir cette date</button><button id="disabledate">Pas de réveil à cette date</button></div>
-        <p class="note">Dates personnalisées : ${Object.keys(e.dates).sort().join(', ')||'aucune'}</p>`:''}
+        <p class="note">Dates personnalisées : ${Object.keys(e.dates).sort().join(', ')||'aucune'}</p></details>`:''}
       <div class="actions"><button id="savewakes" class="primary">Enregistrer les réveils</button><button id="cancelwakes">Annuler</button></div><p id="status" role="status"></p>
       </div></ha-card><style>.wrap{padding:0 16px 16px}.note{font-size:12px;opacity:.75}.days,.actions{display:flex;gap:7px;flex-wrap:wrap;margin:12px 0}.zone{display:flex;gap:12px;margin:8px 0;align-items:center;flex-wrap:wrap}button,input,select{font:inherit;border:1px solid var(--divider-color,#aaa);border-radius:7px;padding:8px;background:var(--card-background-color,#fff);color:var(--primary-text-color,#222)}button{cursor:pointer}.active,.primary{background:var(--primary-color,#03a9f4);color:white}</style>`;
     const $=id=>this.querySelector('#'+id);

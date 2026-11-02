@@ -59,6 +59,8 @@ async def ws_get(hass, connection, msg):
         "weekly": copy.deepcopy(obj["weekly"]),
         "exceptions": copy.deepcopy(obj["exceptions"]),
         "profiles": entry.options.get("profiles", DEFAULT_PROFILES),
+        "effective": {key: value.isoformat() if hasattr(value, "isoformat") else value
+                      for key, value in (obj["coordinator"].data or {}).items()},
         "readonly": True,
         "preheat_minutes": entry.options.get("preheat_minutes", 0),
         "override": copy.deepcopy(obj["override"]),
