@@ -1,4 +1,4 @@
-# Heating Planner v0.9.2 — Préchauffage dynamique
+# Heating Planner v0.9.3 — Préchauffage dynamique
 
 ## Installation depuis v0.8.x
 1. Effectuer une sauvegarde Home Assistant.
@@ -50,11 +50,15 @@ Pas de validation sur une installation Home Assistant réelle. Après installati
 
 Pour exécuter les tests Python autonomes, se placer à la racine du ZIP : `python test_dynamic_preheat.py` et `python test_preheat_regression.py`. Le test navigateur nécessite Node.js, Playwright et Chrome (`node test_ui.cjs`).
 
-## Correction v0.9.2 : unité de vitesse
+## Correction v0.9.3 : unité de vitesse
 Une vitesse de 0,028 °C/min correspond à 1,68 °C/h. La v0.9.0 interprétait toute valeur comme °C/h, ce qui pouvait déclencher le plafond de 180 minutes.
 Après installation et redémarrage, ouvrir les options Heating Planner et sélectionner l’unité de la valeur de vitesse : minute (°C/min) si l’assistant contient 0,028 par minute ; hour (°C/h) s’il contient 1,68 par heure. Le défaut reste hour pour préserver les configurations existantes. Aucune détection par l’ordre de grandeur ni modification de l’assistant n’est faite.
 L’affichage et le calcul utilisent ensuite la valeur convertie en °C/h. La valeur source et son unité doivent être cohérentes. Avec 16,6 °C, une cible de 21 °C et 1,68 °C/h, la durée non plafonnée est de 158 minutes. Un préchauffage déjà commencé peut conserver sa durée jusqu’à l’échéance ; enregistrer le réglage d’unité réinitialise cette anticipation.
 Tests Python de conversion, bornes, secours et calcul : OK. Tests de préchauffage fixe et Chrome : OK. Pas de validation sur Home Assistant réel. Aucune commande OPTA.
 
-## Présentation v0.9.2
+## Présentation v0.9.3
 La température actuelle conserve sa grande taille et dispose de davantage de largeur. La consigne effective est affichée plus petite et avec une graisse plus légère. Pour cette modification seule, remplacer www/heating-planner-card.js, utiliser /local/heating-planner-card.js?v=0.9.2 puis actualiser complètement la page. Aucun redémarrage requis. Aucune modification du calcul, du moteur ou des données. Syntaxe et tests Chrome : OK ; contrôle visuel mobile effectué.
+
+## Texte de l’éditeur v0.9.3
+La mention des horaires de démonstration est remplacée par Planning de la zone. Le texte indique préchauffage dynamique et secours fixe, secours fixe effectivement utilisé si les mesures sont invalides, ou préchauffage fixe selon le résultat fourni par le serveur. Le délai fixe n’est plus présenté comme la durée dynamique. Aucune commande envoyée au chauffage reste explicite.
+Remplacer uniquement le JavaScript et utiliser /local/heating-planner-card.js?v=0.9.3, puis actualiser complètement. Syntaxe et tests Chrome existants : OK. Aucun changement Python, calcul ou stockage.

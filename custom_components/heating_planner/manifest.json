@@ -1,7 +1,7 @@
 {
   "domain": "heating_planner",
   "name": "Heating Planner (Preview)",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "documentation": "https://www.home-assistant.io/",
   "codeowners": [],
   "config_flow": true,
