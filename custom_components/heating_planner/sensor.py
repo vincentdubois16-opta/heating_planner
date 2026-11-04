@@ -54,4 +54,4 @@ class HeatingPlannerSensor(CoordinatorEntity, SensorEntity):
             return None
         return {key: value.isoformat() if hasattr(value, "isoformat") else value
                 for key, value in self.coordinator.data.items()
-                if key.startswith("dynamic_") or key == "preheat_strategy"}
+                if key.startswith(("dynamic_", "away_return_")) or key == "preheat_strategy"}

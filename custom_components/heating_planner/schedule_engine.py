@@ -39,16 +39,55 @@ def _resolve_wall_time(day: date, wall: time, tz: ZoneInfo) -> datetime:
     raise ValueError("Could not resolve local schedule time")
 
 
-def calculate(now: datetime, timezone: str, profiles: dict, weekly: dict, exceptions: dict | None = None, wakes=None, zone=None) -> dict:
-    """Return active profile/target and next *actual target* change (within 14 days)."""
+class ScheduleTimeline:
+    """One immutable schedule expansion, queried by time without rebuilding days."""
+    def __init__(self, events, tz):
+        self.events = tuple(events)
+        self.stamps = tuple(event[0] for event in events)
+        self.tz = tz
+        upcoming = None
+        next_different = [None] * len(events)
+        for index in range(len(events)-2, -1, -1):
+            if events[index][2] != events[index+1][2]:
+                upcoming = index+1
+            next_different[index] = upcoming
+        self.next_different = tuple(next_different)
+
+    def at(self, moment):
+        from bisect import bisect_right
+        index = bisect_right(self.stamps, moment.timestamp()) - 1
+        if index < 0:
+            raise ValueError("No current schedule entry")
+        current = self.events[index]
+        limit = datetime.combine(moment.astimezone(self.tz).date()+timedelta(days=16), time.min, self.tz).timestamp()
+        next_index = self.next_different[index]
+        upcoming = self.events[next_index] if next_index is not None and self.events[next_index][0] < limit else None
+        return {"profile": current[1], "target": current[2],
+                "next_target": upcoming[2] if upcoming else None,
+                "next_change": datetime.fromtimestamp(upcoming[0], self.tz) if upcoming else None}
+
+    def transitions(self, start, horizon):
+        from bisect import bisect_right
+        index = bisect_right(self.stamps, start.timestamp())
+        before = self.events[max(0, index-1)][2]
+        for stamp, _, after in self.events[index:]:
+            if stamp > horizon.timestamp():
+                break
+            if after != before:
+                yield datetime.fromtimestamp(stamp, self.tz), before, after
+            before = after
+
+
+def build_timeline(now, timezone, profiles, weekly, exceptions=None, wakes=None, zone=None, extra_moments=()):
     if now.tzinfo is None:
         raise ValueError("now must be timezone-aware")
     tz = ZoneInfo(timezone)
-    local_now = now.astimezone(tz)
     exceptions = exceptions or {}
+    # A distant override expiry needs its own window, not every intervening day.
+    days = sorted({moment.astimezone(tz).date()+timedelta(days=offset)
+                   for moment in (now, *extra_moments) for offset in range(-1, 17)})
     events = []
-    for offset in range(-1, 16):
-        day = local_now.date() + timedelta(days=offset)
+    for day in days:
         for wall, profile in _day_entries(day, weekly, exceptions):
             if profile not in profiles:
                 raise ValueError(f"Unknown profile: {profile}")
@@ -59,8 +98,7 @@ def calculate(now: datetime, timezone: str, profiles: dict, weekly: dict, except
     if wakes and zone:
         from .wake_engine import wake_intervals
         intervals = []
-        for offset in range(-1, 16):
-            day = local_now.date() + timedelta(days=offset)
+        for day in days:
             intervals.extend(wake_intervals(wakes, zone, profiles, day, timezone))
         boundaries = {e[0] for e in events}
         for start, end, _, _ in intervals:
@@ -78,29 +116,11 @@ def calculate(now: datetime, timezone: str, profiles: dict, weekly: dict, except
             merged.append((stamp, selected[2], selected[3]) if selected else (stamp, underlying[1], underlying[2]))
         events = merged
     events.sort(key=lambda event: event[0])
-    now_ts = local_now.timestamp()
-    past = [e for e in events if e[0] <= now_ts]
-    if not past:
-        raise ValueError("No current schedule entry")
-    current = past[-1]
-    upcoming = next((e for e in events if e[0] > now_ts and e[2] != current[2]), None)
-    # Skip transitions between profiles with identical targets, while still
-    # tracking the active temperature after each intermediate event.
-    if upcoming is not None:
-        effective = current[2]
-        for e in events:
-            if e[0] <= now_ts:
-                continue
-            if e[2] != effective:
-                upcoming = e
-                break
-            effective = e[2]
-    return {
-        "profile": current[1],
-        "target": current[2],
-        "next_target": upcoming[2] if upcoming else None,
-        "next_change": datetime.fromtimestamp(upcoming[0], tz) if upcoming else None,
-    }
+    return ScheduleTimeline(events, tz)
+
+
+def calculate(now, timezone, profiles, weekly, exceptions=None, wakes=None, zone=None):
+    return build_timeline(now, timezone, profiles, weekly, exceptions, wakes, zone).at(now)
 
 
 def validate_schedule(weekly: dict, profiles: dict) -> dict:

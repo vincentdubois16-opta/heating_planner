@@ -1,5 +1,6 @@
 """Heating Planner: preview schedule editor, no actuator control."""
 import copy
+import asyncio
 import logging
 from datetime import timedelta
 
@@ -7,20 +8,40 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers import entity_registry as er
+from homeassistant.auth.permissions.const import POLICY_CONTROL
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 from homeassistant.components import websocket_api
 
+from .calculation import calculate_cycle, configuration_key
 from .const import DOMAIN, DEFAULT_PROFILES, DEFAULT_SCHEDULE
-from .schedule_engine import calculate, validate_schedule, validate_exceptions
+from .schedule_engine import validate_schedule, validate_exceptions
 from .wake_engine import validate_wakes
-from .preheat_engine import calculate_with_preheat
-from .dynamic_preheat import calculate_dynamic, normalize_slope
-from .override_engine import validate_override, apply_override
+from .override_engine import validate_override
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "binary_sensor"]
 STORAGE_VERSION = 1
+
+
+def can_control_zone(hass, connection, entry_id):
+    user = connection.user
+    if user is None:
+        return False
+    if user.is_admin:
+        return True
+    registry = er.async_get(hass)
+    target = registry.async_get_entity_id("sensor", DOMAIN, f"{entry_id}_target")
+    return bool(target and user.permissions.check_entity(target, POLICY_CONTROL))
+
+
+async def store_zone_change(obj, key, value):
+    async with obj["write_lock"]:
+        saved = {name: obj[name] for name in ("weekly", "exceptions", "override")}
+        saved[key] = value
+        await obj["store"].async_save(saved)
+        obj[key] = value
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -66,7 +87,8 @@ async def ws_get(hass, connection, msg):
             "away": entry.options.get("away_temperature", 15.0),
             "boost": entry.options.get("boost_temperature", entry.options.get("profiles", DEFAULT_PROFILES).get("comfort", 21.0)),
         },
-        "readonly": True,
+        "permissions": {"edit": connection.user.is_admin, "control": can_control_zone(hass, connection, msg["entry_id"])},
+        "readonly": not connection.user.is_admin,
         "preheat_minutes": entry.options.get("preheat_minutes", 0),
         "override": copy.deepcopy(obj["override"]),
     })
@@ -92,8 +114,7 @@ async def ws_set(hass, connection, msg):
     except (ValueError, TypeError, KeyError) as exc:
         connection.send_error(msg["id"], "invalid_schedule", str(exc))
         return
-    await obj["store"].async_save({"weekly": normalized, "exceptions": obj["exceptions"], "override": obj["override"]})
-    obj["weekly"] = normalized
+    await store_zone_change(obj, "weekly", normalized)
     await obj["coordinator"].async_request_refresh()
     connection.send_result(msg["id"], {"ok": True})
 
@@ -118,8 +139,7 @@ async def ws_set_exceptions(hass, connection, msg):
     except (ValueError, TypeError, KeyError) as exc:
         connection.send_error(msg["id"], "invalid_exceptions", str(exc))
         return
-    await obj["store"].async_save({"weekly": obj["weekly"], "exceptions": normalized, "override": obj["override"]})
-    obj["exceptions"] = normalized
+    await store_zone_change(obj, "exceptions", normalized)
     await obj["coordinator"].async_request_refresh()
     connection.send_result(msg["id"], {"ok": True})
 
@@ -164,8 +184,8 @@ async def ws_wakes_set(hass, connection, msg):
 })
 @websocket_api.async_response
 async def ws_set_mode(hass, connection, msg):
-    if not connection.user.is_admin:
-        connection.send_error(msg["id"], "unauthorized", "Administrateur requis")
+    if not can_control_zone(hass, connection, msg["entry_id"]):
+        connection.send_error(msg["id"], "unauthorized", "Vous ne pouvez pas contrôler cette zone")
         return
     obj = hass.data.get(DOMAIN, {}).get(msg["entry_id"])
     if obj is None:
@@ -176,8 +196,7 @@ async def ws_set_mode(hass, connection, msg):
     except (ValueError, TypeError) as exc:
         connection.send_error(msg["id"], "invalid_mode", str(exc))
         return
-    await obj["store"].async_save({"weekly": obj["weekly"], "exceptions": obj["exceptions"], "override": override})
-    obj["override"] = override
+    await store_zone_change(obj, "override", override)
     await obj["coordinator"].async_request_refresh()
     connection.send_result(msg["id"], {"ok": True})
 
@@ -210,49 +229,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     override = saved.get("override", {"mode": "planning"})
     if not isinstance(override, dict):
         override = {"mode": "planning"}
-    state = {"weekly": weekly, "exceptions": exceptions, "override": override, "store": store}
+    state = {"weekly": weekly, "exceptions": exceptions, "override": override, "store": store, "write_lock": asyncio.Lock()}
 
-    dynamic_cache = {}
-    dynamic_signature = None
+    calculation_cache = {}
+
+    def reading(entity_id):
+        entity = hass.states.get(entity_id) if entity_id else None
+        if entity is None or entity.state in ("unknown", "unavailable"):
+            return None
+        return entity.attributes.get("current_temperature") if entity_id.startswith("climate.") else entity.state
+
+    def snapshot():
+        options = copy.deepcopy(dict(entry.options))
+        return {"now": dt_util.utcnow(), "timezone": hass.config.time_zone,
+                "zone": entry.entry_id, "options": options,
+                "profiles": copy.deepcopy(options.get("profiles", DEFAULT_PROFILES)),
+                "weekly": copy.deepcopy(state["weekly"]), "exceptions": copy.deepcopy(state["exceptions"]),
+                "wakes": copy.deepcopy(hass.data[f"{DOMAIN}_wakes"]), "override": copy.deepcopy(state["override"]),
+                "temperature": reading(options.get("temperature_entity", "sensor.temperature_chambre_max")),
+                "slope": reading(options.get("slope_entity", "input_number.max_bedroom_slope"))}
 
     async def update():
-        nonlocal dynamic_signature
-        signature = repr((dict(entry.options), state["weekly"], state["exceptions"], hass.data[f"{DOMAIN}_wakes"], state["override"]))
-        if signature != dynamic_signature:
-            dynamic_cache.clear()
-            dynamic_signature = signature
-        def reading(entity_id):
-            entity = hass.states.get(entity_id) if entity_id else None
-            if entity is None or entity.state in ("unknown", "unavailable"):
-                return None
-            return entity.attributes.get("current_temperature") if entity_id.startswith("climate.") else entity.state
-        now = dt_util.utcnow()
-        def planner(moment):
-            return calculate_with_preheat(moment, hass.config.time_zone,
-                entry.options.get("profiles", DEFAULT_PROFILES), state["weekly"], state["exceptions"],
-                hass.data[f"{DOMAIN}_wakes"], entry.entry_id, entry.options.get("preheat_minutes", 0))
-        base = planner(now)
-        if entry.options.get("dynamic_preheat", False):
-            base = calculate_dynamic(now, hass.config.time_zone,
-                entry.options.get("profiles", DEFAULT_PROFILES), state["weekly"], state["exceptions"],
-                hass.data[f"{DOMAIN}_wakes"], entry.entry_id, entry.options.get("preheat_minutes", 0),
-                entry.options.get("max_preheat_minutes", 180),
-                reading(entry.options.get("temperature_entity", "sensor.temperature_chambre_max")),
-                normalize_slope(reading(entry.options.get("slope_entity", "input_number.max_bedroom_slope")), entry.options.get("slope_unit", "hour")),
-                dynamic_cache if apply_override(base, state["override"], now)["active_mode"] == "planning" else {})
-        effective = apply_override(base, state["override"], now)
-        if effective["active_mode"] != "planning":
-            expiry = effective["override_until"]
-            # During override, only the expiry can alter the setpoint; calculate
-            # the actual planner target at that moment, including preheat.
-            resume = planner(expiry)
-            if float(resume["target"]) != float(effective["target"]):
-                effective["next_change"] = expiry
-                effective["next_target"] = resume["target"]
-            else:
-                effective["next_change"] = resume["next_change"]
-                effective["next_target"] = resume["next_target"]
-        return effective
+        nonlocal calculation_cache
+        while True:
+            captured = snapshot()
+            effective, updated_cache = await hass.async_add_executor_job(calculate_cycle, captured, calculation_cache)
+            # An edit received while the worker ran must not publish an old plan.
+            if configuration_key(captured) != configuration_key(snapshot()):
+                continue
+            calculation_cache = updated_cache
+            return effective
 
     coordinator = DataUpdateCoordinator(hass, logger=_LOGGER,
         name=f"{DOMAIN}_{entry.entry_id}", update_method=update,

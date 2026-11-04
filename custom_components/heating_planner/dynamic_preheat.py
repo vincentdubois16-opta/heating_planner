@@ -1,6 +1,7 @@
 """Read-only dynamic lead estimate; active windows stay latched until their deadline."""
 import math
 from datetime import timedelta
+from .schedule_engine import build_timeline
 from .preheat_engine import calculate_with_preheat, _base_transitions
 
 
@@ -22,7 +23,8 @@ def normalize_slope(value, unit="hour"):
 
 
 def calculate_dynamic(now, timezone, profiles, weekly, exceptions, wakes, zone,
-                      fixed_minutes, maximum, temperature, slope, cache):
+                      fixed_minutes, maximum, temperature, slope, cache, timeline=None):
+    timeline = timeline or build_timeline(now, timezone, profiles, weekly, exceptions, wakes, zone)
     maximum = max(0, min(360, int(maximum)))
     try:
         valid_temp = float(temperature)
@@ -33,7 +35,7 @@ def calculate_dynamic(now, timezone, profiles, weekly, exceptions, wakes, zone,
     valid_slope = positive(slope)
     if valid_temp is None or valid_slope is None:
         cache.clear()
-        result = calculate_with_preheat(now, timezone, profiles, weekly, exceptions, wakes, zone, fixed_minutes)
+        result = calculate_with_preheat(now, timezone, profiles, weekly, exceptions, wakes, zone, fixed_minutes, timeline=timeline)
         result.update(preheat_strategy="fixed_fallback", dynamic_start=None,
                       dynamic_deadline=None, dynamic_minutes=None, dynamic_target=None,
                       dynamic_slope=valid_slope)
@@ -51,9 +53,9 @@ def calculate_dynamic(now, timezone, profiles, weekly, exceptions, wakes, zone,
         return lead
 
     # Freeze the current measurement for the forecast made during this update.
-    result = calculate_with_preheat(now, timezone, profiles, weekly, exceptions, wakes, zone, maximum, lead_for)
+    result = calculate_with_preheat(now, timezone, profiles, weekly, exceptions, wakes, zone, maximum, lead_for, timeline=timeline)
     upcoming = []
-    for boundary, before, after in _base_transitions(now, now+timedelta(days=14), timezone, profiles, weekly, exceptions, wakes, zone):
+    for boundary, before, after in _base_transitions(now, now+timedelta(days=14), timezone, profiles, weekly, exceptions, wakes, zone, timeline=timeline):
         if after > before:
             lead = lead_for(boundary, after)
             upcoming.append((boundary-timedelta(minutes=lead), boundary, lead, after))

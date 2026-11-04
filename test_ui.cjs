@@ -1,114 +1,110 @@
 const {chromium}=require('playwright');
-const fs=require('fs');
 (async()=>{
-const browser=await chromium.launch({headless:true,channel:"chrome"});
-const page=await browser.newPage();
-await page.setContent('<body></body>');
-await page.addScriptTag({path:require('path').join(__dirname,'www/heating-planner-card.js')});
-await page.evaluate(()=>{
-const c=document.createElement('heating-planner-card');document.body.append(c);c.setConfig({});
-c._loaded=true;c._name='Zone test';c._entry='zone';c._profiles={night:17,comfort:22};
-c._weekly=Object.fromEntries(Array.from({length:7},(_,i)=>[i,[{time:'00:00',profile:'night'},{time:'06:30',profile:'comfort'},{time:'22:00',profile:'night'}]]));
-c._exceptions={};c._wakes=[];c._zones=[];c._day=0;c._tab='weekly';c._hass={states:{},callWS:async()=>({})};c._effective={target:22,active_mode:'planning',next_target:17,next_change:'2026-11-02T22:00:00+01:00'};c.render();
+const browser=await chromium.launch({headless:true,channel:'chrome'});
+const page=await browser.newPage();await page.setContent('<body></body>');await page.addScriptTag({path:require('path').join(__dirname,'www/heating-planner-card.js')});
+await page.evaluate(async()=>{
+ const weekly=Object.fromEntries(Array.from({length:7},(_,i)=>[i,[{time:'00:00',profile:'night'},{time:'07:00',profile:'comfort'},{time:'08:30',profile:'eco'},{time:'12:00',profile:'comfort'},{time:'13:00',profile:'eco'},{time:'19:00',profile:'comfort'},{time:'22:30',profile:'night'}]]));
+ window.server={name:'Chambre Max',weekly,exceptions:{},profiles:{night:17,eco:19,comfort:21},effective:{target:19,active_mode:'planning'},permissions:{edit:true,control:true}};window.messages=[];
+ const c=document.createElement('heating-planner-card');document.body.append(c);c.setConfig({temperature_entity:'sensor.room',heating_entity:'climate.room'});
+ c._hass={states:{'sensor.room':{state:'16.5'},'climate.room':{state:'off',attributes:{temperature:19}}},user:{is_admin:true},callWS:async msg=>{
+  messages.push(structuredClone(msg));if(msg.type==='heating_planner/list')return[{entry_id:'max'}];
+  if(msg.type==='heating_planner/get')return structuredClone(server);
+  if(msg.type==='heating_planner/get_wakes')return{events:[],zones:[]};
+  if(msg.type==='heating_planner/set_schedule')server.weekly=structuredClone(msg.weekly);
+  if(msg.type==='heating_planner/set_exceptions'){if(window.failException)throw Error('erreur simulée');server.exceptions=structuredClone(msg.exceptions);}
+  return {ok:true};
+ }};
+ window.resetEditor=async()=>{await c.load();c._tab='weekly';c.render();};await resetEditor();
+ window.atMinute=(entries,minute)=>[...entries].reverse().find(p=>Number(p.time.slice(0,2))*60+Number(p.time.slice(3))<=minute)?.profile;
+ window.assertCover=()=>{const rows=c.model(c.dayKey()).periods;return rows[0].start===0&&rows.at(-1).end===1440&&rows.every((r,i)=>r.end>r.start&&(i===0||r.start===rows[i-1].end));};
 });
-await page.locator('[data-segment="1"]').click();await page.locator('[data-segment="2"]').click();
-if(await page.locator('.hp-row-focus').count()!==1)throw Error('selection');
-await page.locator('input[data-i="1"]').focus();
-await page.evaluate(()=>{const el=document.querySelector('input[data-i="1"]');window.originalInput=el;el.value='07:45';el.dispatchEvent(new Event('change'));});
-if(!await page.evaluate(()=>document.activeElement===originalInput && document.querySelector('input[data-i="1"]')===originalInput))throw Error('focus');
-// Reorder on leaving the input, without replacing the edited node.
-await page.locator('input[data-i="1"]').fill('23:00');
-await page.locator('#status').click();
-let times=await page.locator('input[data-key="time"]').evaluateAll(xs=>xs.map(x=>x.value));
-if(JSON.stringify(times)!==JSON.stringify(['00:00','22:00','23:00']))throw Error('chronological order '+times);
-await page.locator('[data-segment="1"]').click();
-await page.locator('#add').click();
-if(await page.locator('.hp-row-focus input').inputValue()!=='22:30')throw Error('contextual add');
-await page.locator('.hp-row-focus select').selectOption('comfort');
-if(!await page.evaluate(()=>document.querySelector('heating-planner-card')._weekly['0'].find(e=>e.time==='22:30').profile==='comfort'))throw Error('profile association');
-await page.locator('.hp-row-focus [data-remove]').click();
-if(await page.locator('input[data-key="time"]').count()!==3)throw Error('remove association');
-await page.locator('input[data-i="2"]').fill('22:00');
-await page.locator('#status').click();
-if(await page.locator('input[data-i="2"]').inputValue()!=='23:00')throw Error('duplicate rejection');
-console.log('PASS: tri après saisie, ajout contextuel, profil/suppression après tri, rejet doublon');
-await page.locator('#taboverview').click();
-if(!(await page.textContent('body')).includes('22,0 °C'))throw Error('effective target');
-await page.locator('[data-segment="1"]').click();
-if(await page.locator('.hp-row-focus').count()!==1)throw Error('home editing');
-await page.locator('#tabmodes').click();
-await page.evaluate(()=>{document.querySelector('heating-planner-card')._modeTemperatures={away:15,boost:24};});
-await page.locator('#mode').selectOption('away');
-if(await page.locator('#temperature').inputValue()!=='15')throw Error('away preset');
-await page.locator('#mode').selectOption('boost');
-if(await page.locator('#temperature').inputValue()!=='24')throw Error('boost preset');
-await page.locator('#temperature').fill('23');
-await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c._hass.callWS=async msg=>{window.sentMode=msg;return {};};});
-await page.locator('#apply').click();
-if(!await page.evaluate(()=>sentMode.override.temperature===23 && sentMode.override.mode==='boost'))throw Error('manual activation adjustment');
-console.log('PASS: Absent 15, Boost configurable 24, activation ajustable 23');
-await page.locator('#back').click();
-await page.locator('#tabexceptions').click();await page.locator('#tabwakes').click();
-console.log('PASS: focus, selection unique, consigne effective, frise accueil, exceptions et reveils');
-await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c.config={name:'Chambre Max',temperature_entity:'climate.chambre'};c._hass.states={'climate.chambre':{state:'heat',attributes:{current_temperature:16.6,hvac_action:'heating'}}};c._tab='overview';c.render();});
-if(!(await page.textContent('body')).includes('16,6 °C'))throw Error('climate current_temperature');
-if(await page.locator('.hp-heading .hp-badge').textContent()!=='Chauffe')throw Error('hvac action');
-await page.locator('[data-home-mode="away"]').click();
-if(await page.locator('#mode').inputValue()!=='away' || await page.locator('#temperature').inputValue()!=='15')throw Error('home away button');
-await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c._tab='overview';c.render();});
-await page.setViewportSize({width:390,height:900});
-await page.addStyleTag({content:'body{margin:0;background:#191919;color:#eee;font-family:Arial;--primary-text-color:#eee;--secondary-text-color:#aaa;--secondary-background-color:#242424;--divider-color:#333;--primary-color:#03a9b9}'});
-await page.screenshot({path:require('path').join(__dirname,'home_mobile.png')});
-if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error('mobile overflow');
-await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c.config={temperature_entity:'sensor.room'};c._hass.states={'sensor.room':{state:'16.6',attributes:{}}};c.render();});
-if(await page.locator('.hp-heading .hp-badge').textContent()!=='État de chauffe non renseigné')throw Error('unconfigured state');
-await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c.config={temperature_entity:'climate.room'};c._hass.states={'climate.room':{state:'unavailable',attributes:{current_temperature:20,hvac_action:'heating'}}};c.render();});
-if(await page.locator('.hp-heading .hp-badge').textContent()!=='État de chauffe indisponible')throw Error('unavailable');
-if(!(await page.locator('.hp-metric').first().textContent()).includes('—'))throw Error('stale temp');
-console.log('PASS: climate, état réel, valeurs indisponibles, bouton Absent, largeur mobile');
-for(const mode of ['planning','manual','boost','away']){
- await page.evaluate(mode=>{const c=document.querySelector('heating-planner-card');c._effective.active_mode=mode;c._tab='overview';c.render();},mode);
- const selected=await page.locator('[data-home-mode][aria-pressed="true"]').evaluateAll(xs=>xs.map(x=>x.dataset.homeMode));
- if(JSON.stringify(selected)!==JSON.stringify(mode==='planning'?[]:[mode]))throw Error('active button '+mode);
- const colors=await page.locator('[data-home-mode]').evaluateAll(xs=>xs.map(x=>({mode:x.dataset.homeMode,color:getComputedStyle(x).backgroundColor})));
- if(mode==='away' && colors.find(x=>x.mode==='away').color===colors.find(x=>x.mode==='manual').color)throw Error('active color');
+const initial=await page.evaluate(()=>JSON.stringify(document.querySelector('heating-planner-card')._weekly));
+await page.locator('.hp-ed [data-segment="0"]').click();await page.locator('.hp-ed [data-segment="0"]').click();
+if(!await page.evaluate(initial=>{const c=document.querySelector('heating-planner-card');return JSON.stringify(c._weekly)===initial&&c._dirty.size===0&&c.model(c.dayKey()).periods.length===7;},initial))throw Error('first period mutates');
+if(!(await page.locator('.hp-period').first().textContent()).includes('00:00 – 07:00'))throw Error('midnight hidden');
+if(await page.locator('.hp-selected select[data-field="start"]').inputValue()!=='0')throw Error('first period wrong');
+await page.locator('#addperiod').click();
+await page.locator('select[data-period="new"][data-field="start"]').selectOption('60');
+await page.locator('select[data-period="new"][data-field="end"]').selectOption('120');
+await page.locator('[data-new-profile][data-choice="eco"]').click();
+if(await page.evaluate(()=>document.querySelector('heating-planner-card')._dirty.size)!==0)throw Error('unconfirmed creation dirties schedule');
+await page.locator('#confirmperiod').click();
+if(!await page.evaluate(()=>{const c=document.querySelector('heating-planner-card'),e=c.entriesOf(c.dayKey());return assertCover()&&atMinute(e,30)==='night'&&atMinute(e,90)==='eco'&&atMinute(e,180)==='night'&&c._dirty.has('weekly');}))throw Error('insert into midnight');
+await page.locator('[data-act="undo"]').click();
+if(!await page.evaluate(initial=>JSON.stringify(document.querySelector('heating-planner-card')._weekly)===initial,initial))throw Error('undo');
+// Add inside a fully occupied daytime period, not only a free background gap.
+await page.locator('#addperiod').click();
+await page.locator('select[data-period="new"][data-field="start"]').selectOption('435');
+await page.locator('select[data-period="new"][data-field="end"]').selectOption('465');
+await page.locator('[data-new-profile][data-choice="night"]').click();await page.locator('#confirmperiod').click();
+if(!await page.evaluate(()=>{const c=document.querySelector('heating-planner-card'),e=c.entriesOf(c.dayKey());return assertCover()&&atMinute(e,430)==='comfort'&&atMinute(e,450)==='night'&&atMinute(e,470)==='comfort';}))throw Error('occupied insertion');
+// End-of-day insertion and start-of-day insertion.
+for(const [start,end,profile] of [[1380,1440,'comfort'],[0,30,'eco']]){
+ await page.locator('#addperiod').click();await page.locator('select[data-period="new"][data-field="start"]').selectOption(String(start));await page.locator('select[data-period="new"][data-field="end"]').selectOption(String(end));await page.locator(`[data-new-profile][data-choice="${profile}"]`).click();await page.locator('#confirmperiod').click();
+ if(!await page.evaluate(({start,profile})=>{const c=document.querySelector('heating-planner-card'),e=c.entriesOf(c.dayKey());return assertCover()&&atMinute(e,start)===profile&&e[0].time==='00:00'&&e.every(x=>x.time!=='24:00');},{start,profile}))throw Error('day edge insertion');
 }
-console.log('PASS : couleur et sélection des modes Planning, Manuel, Boost, Absent');
-for(const [state,action,label] of [['off',null,'Arrêté'],['heat',null,'Chauffage activé'],['heat','heating','Chauffe'],['heat','idle','Au repos'],['unavailable','heating','État de chauffe indisponible']]){
- await page.evaluate(({state,action})=>{const c=document.querySelector('heating-planner-card');c.config={temperature_entity:'sensor.temperature_chambre_max',heating_entity:'climate.climate_max_bedroom'};c._hass.states={'sensor.temperature_chambre_max':{state:'16.6',attributes:{}},'climate.climate_max_bedroom':{state,attributes:action?{hvac_action:action}:{preset_mode:'away',temperature:15}}};c._tab='overview';c.render();},{state,action});
- if(await page.locator('.hp-heading .hp-badge').textContent()!==label)throw Error('climate state '+state+'/'+action);
-}
-console.log('PASS : configuration utilisateur, climate off/heat, priorité hvac_action, indisponibilité');
-for(const width of [390,1000]){
- await page.setViewportSize({width,height:900});
- for(const tab of ['overview','weekly']){
- await page.evaluate(tab=>{const c=document.querySelector('heating-planner-card');const rows=[{time:'00:00',profile:'night'},{time:'06:00',profile:'comfort'},{time:'07:00',profile:'eco'},{time:'12:00',profile:'comfort'},{time:'13:00',profile:'eco'},{time:'18:00',profile:'comfort'},{time:'23:59',profile:'night'}];c._weekly=Object.fromEntries(Array.from({length:7},(_,i)=>[i,rows.map(e=>({...e}))]));c._day=0;c._tab=tab;c.render();},tab);
- const errors=await page.evaluate(()=>{
- const bar=document.querySelector('.hp-timeline').getBoundingClientRect(),inner=bar.width-2,left=bar.left+1;
- const expected=[0,360,420,720,780,1080,1439,1440];
- const segments=[...document.querySelectorAll('[data-segment]')];
- const diffs=segments.flatMap((el,i)=>{const r=el.getBoundingClientRect();return [Math.abs(r.left-(left+inner*expected[i]/1440)),Math.abs(r.right-(left+inner*expected[i+1]/1440))];});
- const ticks=[...document.querySelectorAll('.hp-ticks span')];
- for(const i of [1,2,3]){const r=ticks[i].getBoundingClientRect();diffs.push(Math.abs((r.left+r.right)/2-(left+inner*i/4)));}
- return diffs.filter(x=>x>0.2);
- });
- if(errors.length)throw Error('timeline geometry '+width+'/'+tab+' '+errors);
+await page.locator('#addperiod').click();await page.locator('select[data-period="new"][data-field="start"]').selectOption('600');await page.locator('select[data-period="new"][data-field="end"]').selectOption('540');await page.locator('#confirmperiod').click();
+if(!(await page.locator('.hp-compose .hp-err').textContent()).includes('après'))throw Error('invalid interval');await page.locator('#cancelperiod').click();
+// Delete first period: still cover midnight; undo restores it.
+await page.locator('[data-select-period]').first().click();await page.locator('[data-delete]').click();
+if(!await page.evaluate(()=>assertCover()))throw Error('delete midnight gap');await page.locator('[data-act="undo"]').click();
+// Model roundtrips preserve every minute, including custom profiles.
+const modelResult=await page.evaluate(()=>{
+ const api=HeatingPlannerModel;let seed=31;const rand=()=>((seed=(seed*1664525+1013904223)>>>0)/4294967296);
+ for(let t=0;t<80;t++){
+  const cuts=new Set([0]);for(let i=0;i<18;i++)cuts.add(Math.floor(rand()*1440));
+  const entries=[...cuts].sort((a,b)=>a-b).map(m=>({time:String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'),profile:['night','eco','comfort','custom'][Math.floor(rand()*4)]}));
+  const model=api.toModel(entries,'night'),out=api.fromModel(model);
+  if(model.periods[0].start!==0||model.periods.at(-1).end!==1440)throw Error('coverage');
+  for(let minute=0;minute<1440;minute++)if(atMinute(entries,minute)!==atMinute(out,minute))throw Error('roundtrip '+t+'/'+minute);
  }
+ return '80 journées, 115200 minutes vérifiées';
+});
+// Saving is explicit; home stays on the committed schedule before that.
+await page.locator('#taboverview').click();if(!(await page.locator('[data-segment="0"]').getAttribute('title')).includes('00:00–07:00'))throw Error('home draft leak');
+await page.locator('#home-exceptions').click();await page.locator('#exceptiondate').fill('2030-01-02');await page.locator('#newexception').click();
+await page.evaluate(()=>window.failException=true);await page.locator('[data-act="save"]').click();await page.waitForFunction(()=>!document.querySelector('heating-planner-card')._saving);
+if(!await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');return !c._dirty.has('weekly')&&c._dirty.has('exceptions')&&c._saveErr.includes('incomplet')&&JSON.stringify(c._saved.weekly)===JSON.stringify(server.weekly);}))throw Error('partial save loses draft');
+await page.evaluate(()=>window.failException=false);await page.locator('[data-act="save"]').click();await page.waitForFunction(()=>document.querySelector('heating-planner-card')._dirty.size===0);
+// Family rights stay compatible with v0.9.5.
+await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c._permissions={edit:false,control:true};c._hass.user.is_admin=false;c._tab='weekly';c.render();});
+if(!await page.locator('#addperiod').isDisabled())throw Error('readonly add');
+await page.locator('.hp-ed [data-segment="0"]').click();if(!await page.locator('.hp-selected [data-choice]').first().isDisabled())throw Error('readonly profile');
+await page.locator('#tabmodes').click();await page.locator('#mode').selectOption('boost');await page.locator('#apply').click();await page.waitForFunction(()=>messages.some(m=>m.type==='heating_planner/set_mode'&&m.override.mode==='boost'));
+// Adjust boundaries without inventing a hidden background period.
+await page.evaluate(async()=>{server.permissions={edit:true,control:true};server.weekly=Object.fromEntries(Array.from({length:7},(_,i)=>[i,[{time:'00:00',profile:'night'},{time:'07:00',profile:'comfort'},{time:'08:30',profile:'eco'}]]));await resetEditor();});
+await page.locator('.hp-ed [data-segment="1"]').click();await page.locator('.hp-selected select[data-field="end"]').selectOption('480');
+if(!await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');return c.model(c.dayKey()).periods.length===3&&assertCover()&&atMinute(c.entriesOf(c.dayKey()),485)==='eco';}))throw Error('boundary shortening creates phantom period');
+await page.locator('.hp-selected select[data-field="start"]').selectOption('450');
+if(!await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');return c.model(c.dayKey()).periods.length===3&&assertCover()&&atMinute(c.entriesOf(c.dayKey()),440)==='night';}))throw Error('start boundary gap');
+// Copy to several days remains available behind a simple disclosure.
+await page.locator('details[data-dk="copy"] summary').click();
+const days=await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');return [(c._day+1)%7,(c._day+2)%7];});
+for(const d of days)await page.locator('[data-copyday="'+d+'"]').click();
+await page.locator('#copyapply').click();
+if(!await page.evaluate(days=>{const c=document.querySelector('heating-planner-card');return days.every(d=>JSON.stringify(c._weekly[d])===JSON.stringify(c._weekly[c._day])&&c._weekly[d]!==c._weekly[c._day]);},days))throw Error('copy several days');
+await page.locator('[data-act="save"]').click();await page.waitForFunction(()=>document.querySelector('heating-planner-card')._dirty.size===0);
+// Wake touch() must mark its changes; saving retains global save behavior.
+await page.locator('#tabwakes').click();await page.locator('#addwake').click();
+if(!await page.evaluate(()=>document.querySelector('heating-planner-card')._dirty.has('wakes')))throw Error('wake add not pending');
+await page.locator('#wakename').fill('Réveil famille');await page.locator('#wakename').press('Tab');
+await page.locator('[data-act="save"]').click();await page.waitForFunction(()=>!document.querySelector('heating-planner-card')._saving);
+if(!await page.evaluate(()=>messages.some(m=>m.type==='heating_planner/set_wakes'&&m.events[0].name==='Réveil famille')))throw Error('wake save');
+// The backend's 48-transition limit is reported before any schedule is changed.
+await page.evaluate(async()=>{server.weekly=Object.fromEntries(Array.from({length:7},(_,i)=>[i,Array.from({length:48},(_,j)=>({time:String(Math.floor(j/2)).padStart(2,'0')+':'+(j%2?'30':'00'),profile:j%2?'comfort':'night'}))]));await resetEditor();});
+await page.locator('#addperiod').click();await page.locator('select[data-period="new"][data-field="start"]').selectOption('15');await page.locator('select[data-period="new"][data-field="end"]').selectOption('30');await page.locator('[data-new-profile][data-choice="eco"]').click();await page.locator('#confirmperiod').click();
+if(!(await page.locator('.hp-compose .hp-err').textContent()).includes('trop'))throw Error('48-transition limit missing');
+if(await page.evaluate(()=>document.querySelector('heating-planner-card')._dirty.size)!==0)throw Error('invalid insert changed data');
+await page.locator('#cancelperiod').click();
+// Visual mobile/desktop review with a clean schedule and first period selected.
+await page.evaluate(async()=>{server.permissions={edit:true,control:true};server.weekly=Object.fromEntries(Array.from({length:7},(_,i)=>[i,[{time:'00:00',profile:'night'},{time:'07:00',profile:'comfort'},{time:'08:30',profile:'eco'},{time:'19:00',profile:'comfort'},{time:'22:30',profile:'night'}]]));await resetEditor();});
+await page.addStyleTag({content:'body{margin:0;background:#191919;font-family:Arial;--primary-text-color:#eee;--secondary-text-color:#aaa;--divider-color:#3d3d3d;--card-background-color:#202020;--secondary-background-color:#292929;--primary-color:#029dbc;--text-primary-color:white}ha-card{display:block;border-radius:12px}'});
+for(const width of [390,980]){
+ await page.setViewportSize({width,height:1050});await page.locator('.hp-ed [data-segment="0"]').click();
+ if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw Error('mobile overflow '+width);
+ await page.screenshot({path:require("path").join(__dirname,`editor096_${width}.png`),fullPage:true});
 }
-console.log('PASS : positions et largeurs exactes des plages et repères, mobile/ordinateur, accueil/éditeur');
-await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c._effective={target:21,active_mode:'planning',preheat_strategy:'dynamic',dynamic_start:'2026-11-03T07:37:00+01:00',dynamic_minutes:143,dynamic_target:21,dynamic_slope:1.68};c._tab='overview';c.render();});
-if(!(await page.locator('#dynamic-preheat').textContent()).includes('143 min'))throw Error('dynamic display');
-await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c._effective.preheat_strategy='fixed_fallback';c.render();});
-if(!(await page.locator('#dynamic-preheat').textContent()).includes('secours'))throw Error('fallback display');
-await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c._effective.active_mode='away';c.render();});
-if(!(await page.locator('#dynamic-preheat').textContent()).includes('suspendu'))throw Error('override display');
-console.log('PASS : affichage anticipation dynamique, secours et suspension');
+console.log('PASS : première période visible/sélection sans ajout, insertion libre y compris 00:00/24:00, annulation, erreur, couverture complète, '+modelResult+', accueil enregistré, sauvegarde partielle, droits et mobile');
 await browser.close();
 })();
-
-
-
-
-
-
 

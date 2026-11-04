@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta, timezone
-from custom_components.heating_planner.override_engine import validate_override, apply_override
+import sys,types
+from pathlib import Path
+pkg=types.ModuleType('heating_planner');pkg.__path__=[str(Path(__file__).resolve().parent/'custom_components/heating_planner')];sys.modules['heating_planner']=pkg
+from heating_planner.override_engine import validate_override, apply_override
 
 now=datetime(2026,10,31,21,45,tzinfo=timezone.utc)
 base={'target':22.,'next_target':17.,'next_change':now+timedelta(hours=1),'preheat_active':True}
