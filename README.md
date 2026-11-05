@@ -1,3 +1,9 @@
+# Heating Planner v0.9.7 — modes en un geste, congés du… au…, réveils sur la frise, températures dans la carte
+
+Nouveautés, installation (redémarrage Home Assistant nécessaire : composant Python modifié) et tests : voir `INSTRUCTIONS_v0.9.7_FR.md` et `VERIFICATIONS_v0.9.7_FR.md`. Ressource : `/local/heating-planner-card.js?v=0.9.7`.
+
+---
+
 # Heating Planner v0.9.6 — éditeur par périodes
 
 Cette version reprend le JavaScript que tu as fourni, avec son bouton Enregistrer commun, son annulation et sa copie vers plusieurs jours. Elle corrige les clics et l'ajout de périodes et rend la liste plus compacte. Le moteur Python de la v0.9.5 est inchangé.

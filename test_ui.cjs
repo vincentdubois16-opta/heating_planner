@@ -1,6 +1,6 @@
 const {chromium}=require('playwright');
 (async()=>{
-const browser=await chromium.launch({headless:true,channel:'chrome'});
+const browser=await chromium.launch({headless:true,channel:'chrome'}).catch(()=>chromium.launch({headless:true}));
 const page=await browser.newPage();await page.setContent('<body></body>');await page.addScriptTag({path:require('path').join(__dirname,'www/heating-planner-card.js')});
 await page.evaluate(async()=>{
  const weekly=Object.fromEntries(Array.from({length:7},(_,i)=>[i,[{time:'00:00',profile:'night'},{time:'07:00',profile:'comfort'},{time:'08:30',profile:'eco'},{time:'12:00',profile:'comfort'},{time:'13:00',profile:'eco'},{time:'19:00',profile:'comfort'},{time:'22:30',profile:'night'}]]));
@@ -70,7 +70,8 @@ await page.evaluate(()=>window.failException=false);await page.locator('[data-ac
 await page.evaluate(()=>{const c=document.querySelector('heating-planner-card');c._permissions={edit:false,control:true};c._hass.user.is_admin=false;c._tab='weekly';c.render();});
 if(!await page.locator('#addperiod').isDisabled())throw Error('readonly add');
 await page.locator('.hp-ed [data-segment="0"]').click();if(!await page.locator('.hp-selected [data-choice]').first().isDisabled())throw Error('readonly profile');
-await page.locator('#tabmodes').click();await page.locator('#mode').selectOption('boost');await page.locator('#apply').click();await page.waitForFunction(()=>messages.some(m=>m.type==='heating_planner/set_mode'&&m.override.mode==='boost'));
+// v0.9.7 : plus d'onglet Modes, Boost se lance en un geste depuis l'accueil.
+await page.locator('#taboverview').click();await page.locator('[data-qa="boost"]').click();await page.waitForFunction(()=>messages.some(m=>m.type==='heating_planner/set_mode'&&m.override.mode==='boost'));
 // Adjust boundaries without inventing a hidden background period.
 await page.evaluate(async()=>{server.permissions={edit:true,control:true};server.weekly=Object.fromEntries(Array.from({length:7},(_,i)=>[i,[{time:'00:00',profile:'night'},{time:'07:00',profile:'comfort'},{time:'08:30',profile:'eco'}]]));await resetEditor();});
 await page.locator('.hp-ed [data-segment="1"]').click();await page.locator('.hp-selected select[data-field="end"]').selectOption('480');

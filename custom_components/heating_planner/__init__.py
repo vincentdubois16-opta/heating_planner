@@ -19,6 +19,7 @@ from .const import DOMAIN, DEFAULT_PROFILES, DEFAULT_SCHEDULE
 from .schedule_engine import validate_schedule, validate_exceptions
 from .wake_engine import validate_wakes
 from .override_engine import validate_override
+from .temperatures import apply_temperatures
 
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor", "binary_sensor"]
@@ -54,6 +55,7 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     websocket_api.async_register_command(hass, ws_wakes_get)
     websocket_api.async_register_command(hass, ws_wakes_set)
     websocket_api.async_register_command(hass, ws_set_mode)
+    websocket_api.async_register_command(hass, ws_set_temperatures)
     hass.data[f"{DOMAIN}_ws_registered"] = True
     return True
 
@@ -175,6 +177,36 @@ async def ws_wakes_set(hass, connection, msg):
     for obj in hass.data.get(DOMAIN, {}).values():
         await obj["coordinator"].async_request_refresh()
     connection.send_result(msg["id"], {"ok": True})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "heating_planner/set_temperatures",
+    vol.Required("entry_id"): str,
+    vol.Required("profiles"): dict,
+    vol.Optional("away_temperature"): vol.Any(int, float),
+    vol.Optional("boost_temperature"): vol.Any(int, float),
+})
+@websocket_api.async_response
+async def ws_set_temperatures(hass, connection, msg):
+    """Update Nuit/Éco/Confort and the Absent/Boost defaults from the card (administrators)."""
+    if not connection.user.is_admin:
+        connection.send_error(msg["id"], "unauthorized", "Administrateur requis pour modifier les températures")
+        return
+    obj = hass.data.get(DOMAIN, {}).get(msg["entry_id"])
+    entry = hass.config_entries.async_get_entry(msg["entry_id"])
+    if obj is None or entry is None:
+        connection.send_error(msg["id"], "not_found", "Zone introuvable")
+        return
+    try:
+        options = apply_temperatures(dict(entry.options), msg["profiles"], msg.get("away_temperature"),
+                                     msg.get("boost_temperature"), DEFAULT_PROFILES)
+    except ValueError as exc:
+        connection.send_error(msg["id"], "invalid_temperatures", str(exc))
+        return
+    # Same storage as the options flow; its update listener refreshes the coordinator too.
+    hass.config_entries.async_update_entry(entry, options=options)
+    await obj["coordinator"].async_request_refresh()
+    connection.send_result(msg["id"], {"ok": True, "profiles": options["profiles"]})
 
 
 @websocket_api.websocket_command({
