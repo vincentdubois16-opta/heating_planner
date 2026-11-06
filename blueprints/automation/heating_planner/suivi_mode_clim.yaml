@@ -1,0 +1,63 @@
+blueprint:
+  name: Heating Planner - Suivi du mode du thermostat
+  description: Recopie le mode heat ou off du thermostat de la pièce vers les climatisations sélectionnées.
+  domain: automation
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    source:
+      name: Thermostat de référence
+      selector:
+        entity:
+          domain: climate
+    followers:
+      name: Climatisations à synchroniser
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+    authorization:
+      name: Interrupteur d’autorisation de la pièce
+      selector:
+        entity:
+          domain: input_boolean
+
+initial_state: false
+mode: restart
+triggers:
+  - trigger: state
+    entity_id: !input source
+    to:
+      - heat
+      - 'off'
+  - trigger: state
+    entity_id: !input authorization
+    to: 'on'
+  - trigger: time_pattern
+    minutes: '/1'
+variables:
+  source_entity: !input source
+  authorization_entity: !input authorization
+  targets: !input followers
+actions:
+  - repeat:
+      for_each: "{{ targets | unique | list }}"
+      sequence:
+        - variables:
+            requested: "{{ states(source_entity) }}"
+        - if:
+            - condition: template
+              value_template: >-
+                {{ is_state(authorization_entity, 'on')
+                   and requested in ['heat', 'off']
+                   and repeat.item != source_entity
+                   and has_value(repeat.item)
+                   and requested in (state_attr(repeat.item, 'hvac_modes') or [])
+                   and states(repeat.item) != requested }}
+          then:
+            - action: climate.set_hvac_mode
+              continue_on_error: true
+              target:
+                entity_id: "{{ repeat.item }}"
+              data:
+                hvac_mode: "{{ requested }}"

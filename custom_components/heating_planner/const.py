@@ -17,3 +17,11 @@ WEEKEND = [
     {"time": "23:00", "profile": "night"},
 ]
 DEFAULT_SCHEDULE = {str(day): (WEEKDAY if day < 5 else WEEKEND) for day in range(7)}
+
+
+def room_defaults(entry):
+    legacy = getattr(entry, "unique_id", None) == "demo_max_bedroom"
+    return {
+        "temperature_entity": "sensor.temperature_chambre_max" if legacy else "",
+        "slope_entity": "input_number.max_bedroom_slope" if legacy else "",
+    }

@@ -1,0 +1,122 @@
+blueprint:
+  name: Heating Planner - Apprentissage de la pente
+  description: Mesure une montée complète à consigne constante et enregistre une moyenne pondérée dans un assistant numérique.
+  domain: automation
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    heat_signal:
+      name: Signal de chauffe réelle
+      description: Climate avec hvac_action ou capteur binaire de chauffe réelle.
+      selector:
+        entity:
+          filter:
+            - domain: climate
+            - domain: binary_sensor
+    reference_climate:
+      name: Thermostat qui reçoit la consigne
+      selector:
+        entity:
+          domain: climate
+    room_sensor:
+      name: Sonde de pièce en °C
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    slope_helper:
+      name: Assistant numérique de pente
+      selector:
+        entity:
+          domain: input_number
+    slope_unit:
+      name: Unité de la pente
+      default: minute
+      selector:
+        select:
+          options:
+            - label: °C/min
+              value: minute
+            - label: °C/h
+              value: hour
+    minimum_gap:
+      name: Écart initial minimum en °C
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 10
+          step: 0.1
+
+initial_state: false
+mode: single
+max_exceeded: silent
+triggers:
+  - trigger: state
+    entity_id: !input heat_signal
+variables:
+  signal: !input heat_signal
+  climate: !input reference_climate
+  sensor: !input room_sensor
+  helper: !input slope_helper
+  unit: !input slope_unit
+  min_gap: !input minimum_gap
+conditions:
+  - condition: template
+    value_template: >-
+      {% if trigger is not defined or trigger.from_state is none or trigger.to_state is none %}
+        false
+      {% elif signal.startswith('binary_sensor.') %}
+        {{ trigger.from_state.state == 'off' and trigger.to_state.state == 'on' }}
+      {% else %}
+        {{ trigger.from_state.state not in ['unknown', 'unavailable']
+           and trigger.to_state.state not in ['unknown', 'unavailable']
+           and trigger.from_state.attributes.get('hvac_action') in ['off', 'idle']
+           and trigger.to_state.attributes.get('hvac_action') == 'heating' }}
+      {% endif %}
+actions:
+  - variables:
+      started: "{{ as_timestamp(trigger.to_state.last_updated) }}"
+      start_temperature: "{{ states(sensor) | float(none) }}"
+      target: "{{ state_attr(climate, 'temperature') | float(none) }}"
+  - condition: template
+    value_template: >-
+      {{ has_value(climate) and state_attr(sensor, 'unit_of_measurement') == '°C'
+         and is_number(start_temperature) and is_number(target)
+         and target - start_temperature >= [1, min_gap | float(1)] | max }}
+  - wait_template: >-
+      {% set heating = is_state(signal, 'on') if signal.startswith('binary_sensor.')
+         else has_value(signal) and state_attr(signal, 'hvac_action') == 'heating' %}
+      {{ not heating or not has_value(climate)
+         or state_attr(climate, 'temperature') | float(none) != target
+         or not is_number(states(sensor)) or states(sensor) | float(0) >= target }}
+    timeout: "06:00:00"
+    continue_on_timeout: false
+  - variables:
+      finish_temperature: "{{ states(sensor) | float(none) }}"
+      duration: "{{ as_timestamp(now()) - started }}"
+      previous: "{{ states(helper) | float(none) }}"
+  - condition: template
+    value_template: >-
+      {% set heating = is_state(signal, 'on') if signal.startswith('binary_sensor.')
+         else has_value(signal) and state_attr(signal, 'hvac_action') == 'heating' %}
+      {{ heating and has_value(climate)
+         and state_attr(climate, 'temperature') | float(none) == target
+         and is_number(finish_temperature) and finish_temperature >= target
+         and 300 <= duration <= 21600
+         and is_number(previous) and previous > 0 }}
+  - variables:
+      measured: "{{ (finish_temperature - start_temperature) / duration * (60 if unit == 'minute' else 3600) }}"
+      learned: "{{ (0.7 * previous + 0.3 * measured) | round(6) }}"
+      lower: "{{ state_attr(helper, 'min') | float(none) }}"
+      upper: "{{ state_attr(helper, 'max') | float(none) }}"
+  - condition: template
+    value_template: >-
+      {{ is_number(lower) and is_number(upper)
+         and measured > 0 and lower <= measured <= upper
+         and lower <= learned <= upper and learned > 0 }}
+  - action: input_number.set_value
+    target:
+      entity_id: !input slope_helper
+    data:
+      value: "{{ learned }}"

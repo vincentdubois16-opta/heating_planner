@@ -7,6 +7,9 @@
           "name": "Nom de la zone"
         }
       }
+    },
+    "error": {
+      "invalid_room_name": "Choisissez un nom de pièce non vide et distinct."
     }
   },
   "options": {

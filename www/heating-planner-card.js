@@ -1,4 +1,4 @@
-/* Heating Planner v0.9.7 — carte Lovelace sans dépendance externe.
+/* Heating Planner v0.9.8 — carte Lovelace sans dépendance externe.
  * Éditeur par périodes couvrant explicitement toute la journée de 00:00 à 24:00,
  * frise cliquable, copie vers plusieurs jours, un seul bouton Enregistrer avec annulation
  * pas à pas. Format de stockage inchangé : liste de points de bascule {time, profile}
@@ -253,7 +253,10 @@ class HeatingPlannerCard extends HTMLElement {
     this._loading=true;
     try{
       const zones=await this._hass.callWS({type:'heating_planner/list'});
-      this._entry=this.config.entry_id||zones[0]?.entry_id;
+      const room = this.config.room;
+      const zone = room ? zones.find(candidate => candidate.name === room) : zones[0];
+      this._entry = this.config.entry_id || zone?.entry_id;
+      if (!this._entry && room) throw Error('Pièce introuvable : ' + room);
       if(!this._entry)throw Error('Aucune zone Heating Planner');
       const data=await this._hass.callWS({type:'heating_planner/get',entry_id:this._entry});
       this._effective=data.effective||{};

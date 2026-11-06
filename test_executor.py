@@ -5,6 +5,7 @@ from datetime import datetime,timedelta,timezone
 from concurrent.futures import ThreadPoolExecutor
 root=(Path(__file__).resolve().parent/'custom_components/heating_planner')
 p=types.ModuleType('hp');p.__path__=[str(root)];sys.modules['hp']=p
+from hp.const import room_defaults
 from hp.calculation import calculate_cycle,configuration_key
 source=ast.parse((root/'__init__.py').read_text(encoding='utf-8'))
 setup=next(n for n in source.body if isinstance(n,ast.AsyncFunctionDef) and n.name=='async_setup_entry')
@@ -13,7 +14,7 @@ factory=ast.FunctionDef(name='factory',args=ast.arguments(posonlyargs=[],args=[]
 module=ast.fix_missing_locations(ast.Module(body=[factory],type_ignores=[]))
 now=datetime(2026,11,4,10,30,tzinfo=timezone.utc);expiry=now.replace(hour=12,minute=0)
 profiles={'night':17,'eco':19,'comfort':21}
-entry=SimpleNamespace(entry_id='max',options={'profiles':profiles,'dynamic_preheat':True,'slope_unit':'minute','preheat_minutes':30,'max_preheat_minutes':180})
+entry=SimpleNamespace(entry_id='max',unique_id='demo_max_bedroom',options={'profiles':profiles,'dynamic_preheat':True,'slope_unit':'minute','preheat_minutes':30,'max_preheat_minutes':180})
 main=threading.get_ident();workers=[];calls=[];mutate=False
 entities={'sensor.temperature_chambre_max':SimpleNamespace(state='18',attributes={}), 'input_number.max_bedroom_slope':SimpleNamespace(state=str(1/60),attributes={})}
 def get(entity):assert threading.get_ident()==main;return entities.get(entity)
@@ -29,7 +30,7 @@ with ThreadPoolExecutor(max_workers=1) as pool:
   if mutate and len(calls)==4:state['override']['until']=(expiry-timedelta(hours=1)).isoformat()
   return result
  hass=SimpleNamespace(states=SimpleNamespace(get=get),config=SimpleNamespace(time_zone='UTC'),data={'heating_planner_wakes':[]},async_add_executor_job=executor)
- env={'copy':copy,'hass':hass,'entry':entry,'state':state,'DOMAIN':'heating_planner','DEFAULT_PROFILES':profiles,'dt_util':SimpleNamespace(utcnow=lambda:now),'calculate_cycle':calculate_cycle,'configuration_key':configuration_key}
+ env={'room_defaults':room_defaults,'copy':copy,'hass':hass,'entry':entry,'state':state,'DOMAIN':'heating_planner','DEFAULT_PROFILES':profiles,'dt_util':SimpleNamespace(utcnow=lambda:now),'calculate_cycle':calculate_cycle,'configuration_key':configuration_key}
  exec(compile(module,'actual_coordinator','exec'),env);update=env['factory']()
  def run():
   coro=update()

@@ -15,7 +15,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.components import websocket_api
 
 from .calculation import calculate_cycle, configuration_key
-from .const import DOMAIN, DEFAULT_PROFILES, DEFAULT_SCHEDULE
+from .const import DOMAIN, DEFAULT_PROFILES, DEFAULT_SCHEDULE, room_defaults
 from .schedule_engine import validate_schedule, validate_exceptions
 from .wake_engine import validate_wakes
 from .override_engine import validate_override
@@ -272,14 +272,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return entity.attributes.get("current_temperature") if entity_id.startswith("climate.") else entity.state
 
     def snapshot():
-        options = copy.deepcopy(dict(entry.options))
+        options = {**room_defaults(entry), **copy.deepcopy(dict(entry.options))}
         return {"now": dt_util.utcnow(), "timezone": hass.config.time_zone,
                 "zone": entry.entry_id, "options": options,
                 "profiles": copy.deepcopy(options.get("profiles", DEFAULT_PROFILES)),
                 "weekly": copy.deepcopy(state["weekly"]), "exceptions": copy.deepcopy(state["exceptions"]),
                 "wakes": copy.deepcopy(hass.data[f"{DOMAIN}_wakes"]), "override": copy.deepcopy(state["override"]),
-                "temperature": reading(options.get("temperature_entity", "sensor.temperature_chambre_max")),
-                "slope": reading(options.get("slope_entity", "input_number.max_bedroom_slope"))}
+                "temperature": reading(options["temperature_entity"]),
+                "slope": reading(options["slope_entity"])}
 
     async def update():
         nonlocal calculation_cache
