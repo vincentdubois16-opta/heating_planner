@@ -1,0 +1,133 @@
+type: custom:button-card
+entity: sensor.temperature_chambre_max
+name: Chambre Max
+icon: mdi:bed-double-outline
+show_state: false
+show_label: true
+
+label: |
+  [[[
+    const raw = states['sensor.chambre_max_demo_consigne_actuelle']?.state;
+    const target = raw == null || raw === '' ? NaN : Number(raw);
+    const mode = states['sensor.chambre_max_chambre_max_demo_mode_actif']?.state;
+
+    const modeLabel = {
+      planning: 'Planning',
+      away: 'Absent',
+      boost: 'Boost',
+      manual: 'Manuel',
+    }[mode] ?? 'Indisponible';
+
+    const temperature = Number.isFinite(target)
+      ? target.toFixed(1).replace('.', ',') + ' °C'
+      : '—';
+
+    return 'Consigne ' + temperature + ' · ' + modeLabel;
+  ]]]
+
+custom_fields:
+  temperature: |
+    [[[
+      const raw = entity?.state;
+      const t = raw == null || raw === '' ? NaN : Number(raw);
+      return Number.isFinite(t)
+        ? `${t.toFixed(1).replace('.', ',')}°`
+        : '—';
+    ]]]
+
+  chauffage: |
+    [[[
+      const thermostat = states['climate.climate_max_bedroom'];
+      const action = thermostat?.attributes?.hvac_action;
+      const unavailable = !thermostat
+        || ['unknown', 'unavailable'].includes(thermostat.state);
+      const heating = !unavailable && action === 'heating';
+
+      const status = unavailable ? 'État indisponible'
+        : heating ? 'En chauffe'
+        : thermostat.state === 'off' || action === 'off' ? 'Chauffage arrêté'
+        : action === 'idle' ? 'Au repos'
+        : thermostat.state === 'heat' ? 'Mode chauffage'
+        : 'État inconnu';
+
+      return `
+        <div style="display:flex;align-items:center;gap:7px;">
+          <ha-icon
+            icon="mdi:fire"
+            style="--mdc-icon-size:18px;width:18px;height:18px;
+                   color:${heating ? '#ff9d43' : '#788397'};">
+          </ha-icon>
+          <span style="font-size:12px;color:#aabbd5;">
+            ${status}
+          </span>
+        </div>`;
+    ]]]
+
+  equipements: ""
+
+styles:
+  card:
+    - background: '#151e30'
+    - border-radius: 20px
+    - padding: 16px
+    - border: none
+    - box-shadow: none
+    - color: white
+
+  grid:
+    - grid-template-areas: '"i n temperature" "l l l" "chauffage chauffage equipements"'
+    - grid-template-columns: 28px minmax(0, 1fr) auto
+    - grid-template-rows: min-content min-content min-content
+    - column-gap: 10px
+    - row-gap: 7px
+
+  icon:
+    - width: 26px
+    - color: '#a5c5ff'
+
+  img_cell:
+    - width: 28px
+    - height: 30px
+    - justify-self: start
+    - align-self: center
+
+  name:
+    - justify-self: start
+    - align-self: center
+    - min-width: 0
+    - font-size: 19px
+    - font-weight: 600
+    - text-overflow: ellipsis
+    - overflow: hidden
+    - white-space: nowrap
+
+  label:
+    - justify-self: start
+    - font-size: 13px
+    - color: '#e9b267'
+
+  custom_fields:
+    temperature:
+      - font-size: 28px
+      - font-weight: 700
+      - align-self: center
+      - justify-self: end
+
+    chauffage:
+      - justify-self: start
+      - align-self: center
+      - margin-top: 3px
+
+    equipements:
+      - justify-self: end
+      - align-self: center
+
+tap_action:
+  action: navigate
+  navigation_path: '#chauffage-chambre-max'
+
+triggers_update:
+  - sensor.temperature_chambre_max
+  - sensor.chambre_max_demo_consigne_actuelle
+  - sensor.chambre_max_chambre_max_demo_mode_actif
+  - climate.climate_max_bedroom
