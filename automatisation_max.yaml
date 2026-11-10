@@ -1,0 +1,14 @@
+alias: Heating Planner - Production Chambre Max
+id: heating_planner_max_production_v2
+description: Bascule Max, observation initiale puis autorisation explicite.
+use_blueprint:
+  path: heating_planner/opta_max_production.yaml
+  input:
+    source_sensor: sensor.chambre_max_demo_consigne_actuelle
+    climate_target: climate.climate_max_bedroom
+    authorization: input_boolean.heating_planner_max_opta_send
+    observation_only: true
+    trv_targets:
+      - climate.shellyblutrv_f844772a4157
+      - climate.shellyblutrv_f844772cb22d
+      - climate.shellyblutrv_f844772ace93
