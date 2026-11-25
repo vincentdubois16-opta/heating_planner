@@ -15,7 +15,7 @@ Cette procédure commence par Chambre Max. Les autres pièces pourront être bas
 
 ## Raccordement de production fourni
 
-Le nouveau blueprint `heating_planner/opta_max_production.yaml` est réservé à Chambre Max. Il vérifie que la source appartient à l'intégration Heating Planner et que le thermostat sélectionné est celui de Max. Les limites, le pas, les valeurs numériques et le preset planning sont contrôlés. Les commandes sont placées derrière l'autorisation, y compris lors d'une exécution manuelle des actions.
+Chambre Max utilise le blueprint générique `heating_planner/opta_production.yaml`, avec le topic `opta/target/set/MaxBedroom`, un décalage de +2 °C pour les vannes et le preset requis `planning`. Il remplace `opta_max_production.yaml`, qui était réservé à Max. Il vérifie que la source appartient à l'intégration Heating Planner et que le topic est valide. Les limites, le pas, les valeurs numériques et le preset requis sont contrôlés. Les commandes sont placées derrière l'autorisation, y compris lors d'une exécution manuelle des actions.
 
 L'envoi OPTA passe par **une publication MQTT** sur le topic Max, avec `retain: true` et `qos: 1`. Ce choix remplace l'ancienne consigne mémorisée par le broker. Il évite qu'une ancienne cible mémorisée soit rejouée à une reconnexion. La publication est renouvelée chaque minute tant que l'envoi est autorisé et que les gardes sont satisfaites, ainsi qu'au démarrage et lors d'une différence de cible. Le retour de consigne du climate reste le moyen de vérifier la réception.
 
@@ -26,7 +26,7 @@ Le mode observation est activé dans l'exemple fourni. L'état on/off de l'autom
 ## 1. Sauvegarder et installer en observation
 
 1. Faire une sauvegarde Home Assistant. Noter l'état on/off des anciennes automatisations de la section suivante pour pouvoir le restaurer.
-2. Laisser l'autorisation d'envoi **off**. Installer le blueprint dans `/config/blueprints/automation/heating_planner/opta_max_production.yaml`.
+2. Laisser l'autorisation d'envoi **off**. Installer le blueprint dans `/config/blueprints/automation/heating_planner/opta_production.yaml`.
 3. Créer une automatisation à partir de ce blueprint. Le fichier `automatisation_max.yaml` contient les paramètres déjà remplis et peut être utilisé dans l'éditeur YAML d'une nouvelle automatisation. Conserver `observation_only: true`.
 4. Activer cette nouvelle automatisation pour lire ses traces. Les anciennes automatisations peuvent encore piloter durant cette observation.
 5. Vérifier que le calcul observé correspond à la carte Heating Planner, avec la source `sensor.chambre_max_demo_consigne_actuelle`. Vérifier aussi les trois messages de vannes, leur cible +2 °C, leurs limites et leur pas. Les profils et modes de Max doivent rester dans les limites OPTA et leurs cibles +2 °C dans celles des vannes.
