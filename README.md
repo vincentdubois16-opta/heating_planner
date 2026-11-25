@@ -1,12 +1,14 @@
-# Heating Planner v0.9.8
+# Heating Planner v0.9.9
 
-Cette version reprend la carte v0.9.7 et permet de créer plusieurs pièces. Chaque pièce a son planning, ses températures, sa sonde et son assistant de pente. Chambre Max conserve son identifiant et ses données.
+Nouveautés de la v0.9.9 : retard avant la montée par pièce (fixe ou appris), capteur « Retard de chauffe », blueprint d'alerte « chauffe sans montée ». Détails dans `INSTRUCTIONS_v0.9.9_FR.md`.
+
+La v0.9.8 reprend la carte v0.9.7 et permet de créer plusieurs pièces. Chaque pièce a son planning, ses températures, sa sonde et son assistant de pente. Chambre Max conserve son identifiant et ses données.
 
 ## Installation
 
 1. Sauvegarder Home Assistant et enregistrer les modifications de planning en cours.
 2. Remplacer le dossier `/config/custom_components/heating_planner/` et le fichier `/config/www/heating-planner-card.js`.
-3. Redémarrer Home Assistant et actualiser la ressource de la carte avec `/local/heating-planner-card.js?v=0.9.8`.
+3. Redémarrer Home Assistant et actualiser la ressource de la carte avec `/local/heating-planner-card.js?v=0.9.9`.
 4. Pour ajouter Chambre ou Chambre Pauline, ajouter une nouvelle instance de l’intégration Heating Planner et lui donner un nom distinct. Dans les options de cette pièce, choisir sa sonde et, pour le préchauffage dynamique, son propre assistant numérique de pente. La carte accepte le nom exact de la pièce via `room`. La sélection par `entry_id` reste disponible.
 
 ```yaml
@@ -22,18 +24,21 @@ Les entités de cet exemple sont à remplacer par tes identifiants. La sonde uti
 
 Copier les fichiers de `blueprints/automation/heating_planner/` dans le dossier correspondant sous `/config`, puis créer les automatisations voulues depuis les blueprints. Elles sont initialement arrêtées et reviennent à l’arrêt après redémarrage. Configurer et activer chaque instance séparément après vérification. Le raccordement de Chambre Max déjà en place peut rester tel quel.
 
-- **Apprentissage de la pente.** Sélectionner le thermostat qui reçoit la consigne, une sonde en °C et un signal de chauffe réelle. Le signal peut être un climate dont `hvac_action` est renseigné ou un capteur binaire fiable. Utiliser le même assistant numérique et la même unité dans le blueprint et dans les options de la pièce. Renseigner une pente initiale positive, des bornes plausibles et une précision compatible avec son unité. Une seule automatisation doit écrire dans chaque assistant.
+- **Apprentissage du retard et de la pente.** Sélectionner le thermostat qui reçoit la consigne, une sonde en °C et un signal de chauffe réelle. Le signal peut être un climate lu par `hvac_action`, un climate dont l'état `heat` signale la demande (OPTA) ou un capteur binaire fiable. Renseigner l'assistant de retard pour apprendre le retard et la pente nette. Utiliser le même assistant numérique et la même unité dans le blueprint et dans les options de la pièce. Renseigner une pente initiale positive, des bornes plausibles et une précision compatible avec son unité. Une seule automatisation doit écrire dans chaque assistant.
 - **Consigne OPTA et vannes par pièce.** Sélectionner le capteur Consigne actuelle de la pièce, son thermostat OPTA et son interrupteur d’autorisation. La liste de vannes peut être vide. Pour Max, sélectionner les trois vannes et conserver le décalage de +2 °C. Le mode observation permet de vérifier la cible. L’envoi exige le preset OPTA `planning`, le verrou actif et la sortie du mode observation. Suspendre les anciennes automatisations de consigne de cette pièce avant de prendre le relais.
+- **Alerte chauffe sans montée.** Même signal que l'apprentissage, sonde de la pièce et capteur « Retard de chauffe ». Notifie si la pièce ne gagne pas 0,2 °C dans le délai retard × 2 + 10 min (15 à 120 min). Ne commande rien.
 - **Suivi du mode du thermostat.** Pour Chambre et Chambre Pauline, créer une instance par pièce, avec le thermostat de référence, la ou les clims et un interrupteur d’autorisation. Le blueprint suit l’état `heat` ou `off` et vérifie que la cible accepte ce mode. Il ne modifie pas la consigne de la clim. Pendant la synchronisation, une modification manuelle de son mode peut être réappliquée au contrôle suivant, au plus tard au prochain passage périodique d’une minute.
 
-## Calcul de la pente
+## Calcul du retard et de la pente
 
-L’automatisation relève la température au passage en chauffe réelle. Elle attend que la température atteigne la consigne initiale. L’écart initial doit être d’au moins 1 °C, ou le seuil supérieur choisi. La consigne doit rester constante et la chauffe continue. Le cycle est écarté en cas d’interruption, de mesure indisponible, de durée inférieure à cinq minutes ou supérieure à six heures, ou de pente hors des bornes de l’assistant. Si l’arrêt de chauffe est reçu avant la dernière mesure, le cycle est écarté aussi.
+L'automatisation relève la température au passage en chauffe réelle. Avec un assistant de retard, elle note l'instant où la pièce a gagné le seuil (0,2 °C par défaut), puis attend la consigne initiale. La pente nette est la hausse entre ce point et la consigne, divisée par le temps. Le retard est le temps jusqu'au seuil, moins seuil ÷ pente nette, et vaut au moins 0. Sans assistant de retard, la pente reste la hausse totale divisée par la durée totale, retard compris, comme avant.
 
-La pente mesurée est la hausse effective divisée par le temps. La valeur enregistrée vaut `0.7 × ancienne + 0.3 × mesurée`. Par exemple, 0,028 et 0,035 °C/min donnent 0,0301 °C/min. C’est une moyenne mobile exponentielle. Le préchauffage lit ensuite l’assistant via les options existantes.
+L'écart initial doit être d'au moins 1 °C, ou le seuil supérieur choisi. La consigne doit rester constante et la chauffe continue. Le cycle est écarté en cas d'interruption, de mesure indisponible, de durée inférieure à cinq minutes ou supérieure à six heures, de seuil non atteint en trois heures, de montée nette de moins de cinq minutes, ou de pente ou de retard hors des bornes de leur assistant.
 
-Pour tenir compte de l’extérieur, une prochaine étape serait de relever, pour chaque cycle valable, la température extérieure moyenne et l’écart moyen intérieur–extérieur. On pourrait alors comparer les pentes dans des plages d’écart comparables, séparément par pièce et par type de chauffe. Il faut plusieurs cycles par plage pour juger si le gain justifie un modèle plus complexe. Cette version utilise une pente par pièce.
+Chaque valeur enregistrée vaut `0.7 × ancienne + 0.3 × mesurée`. Par exemple, 0,028 et 0,035 °C/min donnent 0,0301 °C/min. Le préchauffage dynamique dure ensuite retard + écart ÷ pente. Dès qu'un retard est utilisé, fixe ou appris, la pente doit être la pente nette.
+
+Pour tenir compte de l'extérieur, le blueprint peut noter la température extérieure de chaque cycle retenu dans le journal. Avec plusieurs cycles par plage de température, on pourra juger si un modèle dépendant de l'extérieur vaut la peine. Cette version utilise un retard et une pente par pièce.
 
 ## Vérifications
 
-Les tests Python existants, le test de création de deux pièces distinctes avec doublons refusés et les tests Chrome de la carte v0.9.7 passent. Les trois fichiers YAML ont été analysés et leurs références d’entrées vérifiées. Le rendu des templates et l’exécution des automatisations restent à vérifier dans Home Assistant.
+Les tests Python existants, `test_dead_time.py`, le test de création de deux pièces distinctes avec doublons refusés et les tests Chrome de la carte v0.9.7 passent. Les blueprints d'apprentissage et d'alerte ont été exécutés hors Home Assistant avec des états simulés. Les trois fichiers YAML ont été analysés et leurs références d’entrées vérifiées. Le rendu des templates et l’exécution des automatisations restent à vérifier dans Home Assistant.

@@ -24,4 +24,6 @@ def room_defaults(entry):
     return {
         "temperature_entity": "sensor.temperature_chambre_max" if legacy else "",
         "slope_entity": "input_number.max_bedroom_slope" if legacy else "",
+        "dead_time_minutes": 0,
+        "dead_time_entity": "",
     }

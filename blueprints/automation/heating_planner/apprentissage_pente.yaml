@@ -1,18 +1,32 @@
 blueprint:
-  name: Heating Planner - Apprentissage de la pente
-  description: Mesure une montée complète à consigne constante et enregistre une moyenne pondérée dans un assistant numérique.
+  name: Heating Planner - Apprentissage du retard et de la pente
+  description: >
+    Mesure une montée complète à consigne constante. Avec un assistant de retard, sépare le retard
+    avant la montée et la pente nette, puis enregistre une moyenne pondérée de chacun. Sans assistant
+    de retard, garde la mesure des versions précédentes (pente calculée retard compris).
   domain: automation
   homeassistant:
     min_version: 2024.10.0
   input:
     heat_signal:
       name: Signal de chauffe réelle
-      description: Climate avec hvac_action ou capteur binaire de chauffe réelle.
+      description: Climate (hvac_action ou état heat, voir ci-dessous) ou capteur binaire de chauffe réelle.
       selector:
         entity:
           filter:
             - domain: climate
             - domain: binary_sensor
+    climate_signal_mode:
+      name: Lecture du signal climate
+      description: Ignoré pour un capteur binaire. Choisir « État heat » pour les thermostats OPTA.
+      default: hvac_action
+      selector:
+        select:
+          options:
+            - label: hvac_action = heating
+              value: hvac_action
+            - label: État heat = demande de chauffe (OPTA)
+              value: state
     reference_climate:
       name: Thermostat qui reçoit la consigne
       selector:
@@ -39,6 +53,24 @@ blueprint:
               value: minute
             - label: °C/h
               value: hour
+    dead_time_helper:
+      name: Assistant numérique du retard (minutes)
+      description: >
+        Facultatif. Le même assistant que « Entité du retard appris » dans les options de la pièce.
+        Renseigné, la pente devient la pente nette, mesurée après le retard.
+      default: ""
+      selector:
+        entity:
+          domain: input_number
+    rise_threshold:
+      name: Hausse qui marque le début de la montée (°C)
+      description: Au-dessus du bruit de la sonde. Le retard est corrigé de cette hausse.
+      default: 0.2
+      selector:
+        number:
+          min: 0.1
+          max: 0.5
+          step: 0.05
     minimum_gap:
       name: Écart initial minimum en °C
       default: 1
@@ -47,6 +79,14 @@ blueprint:
           min: 1
           max: 10
           step: 0.1
+    outdoor_sensor:
+      name: Sonde extérieure (facultatif)
+      description: Seulement notée dans le journal pour chaque cycle retenu, pour analyse ultérieure.
+      default: ""
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
 
 initial_state: false
 mode: single
@@ -56,22 +96,29 @@ triggers:
     entity_id: !input heat_signal
 variables:
   signal: !input heat_signal
+  signal_mode: !input climate_signal_mode
   climate: !input reference_climate
   sensor: !input room_sensor
   helper: !input slope_helper
+  dead_helper: !input dead_time_helper
+  outdoor: !input outdoor_sensor
   unit: !input slope_unit
   min_gap: !input minimum_gap
+  threshold: !input rise_threshold
 conditions:
   - condition: template
     value_template: >-
       {% if trigger is not defined or trigger.from_state is none or trigger.to_state is none %}
         false
+      {% elif trigger.from_state.state in ['unknown', 'unavailable']
+           or trigger.to_state.state in ['unknown', 'unavailable'] %}
+        false
       {% elif signal.startswith('binary_sensor.') %}
         {{ trigger.from_state.state == 'off' and trigger.to_state.state == 'on' }}
+      {% elif signal_mode == 'state' %}
+        {{ trigger.from_state.state != 'heat' and trigger.to_state.state == 'heat' }}
       {% else %}
-        {{ trigger.from_state.state not in ['unknown', 'unavailable']
-           and trigger.to_state.state not in ['unknown', 'unavailable']
-           and trigger.from_state.attributes.get('hvac_action') in ['off', 'idle']
+        {{ trigger.from_state.attributes.get('hvac_action') in ['off', 'idle']
            and trigger.to_state.attributes.get('hvac_action') == 'heating' }}
       {% endif %}
 actions:
@@ -84,39 +131,108 @@ actions:
       {{ has_value(climate) and state_attr(sensor, 'unit_of_measurement') == '°C'
          and is_number(start_temperature) and is_number(target)
          and target - start_temperature >= [1, min_gap | float(1)] | max }}
+  # 1. Fin du retard : la pièce a gagné le seuil choisi.
   - wait_template: >-
-      {% set heating = is_state(signal, 'on') if signal.startswith('binary_sensor.')
-         else has_value(signal) and state_attr(signal, 'hvac_action') == 'heating' %}
+      {% if signal.startswith('binary_sensor.') %}{% set heating = is_state(signal, 'on') %}
+      {% elif signal_mode == 'state' %}{% set heating = is_state(signal, 'heat') %}
+      {% else %}{% set heating = has_value(signal) and state_attr(signal, 'hvac_action') == 'heating' %}{% endif %}
+      {{ not heating or not has_value(climate)
+         or state_attr(climate, 'temperature') | float(none) != target
+         or not is_number(states(sensor))
+         or states(sensor) | float(0) >= start_temperature + threshold | float(0.2) }}
+    timeout: "03:00:00"
+    continue_on_timeout: false
+  - variables:
+      rise_time: "{{ as_timestamp(now()) }}"
+      rise_temperature: "{{ states(sensor) | float(none) }}"
+  - condition: template
+    value_template: >-
+      {% if signal.startswith('binary_sensor.') %}{% set heating = is_state(signal, 'on') %}
+      {% elif signal_mode == 'state' %}{% set heating = is_state(signal, 'heat') %}
+      {% else %}{% set heating = has_value(signal) and state_attr(signal, 'hvac_action') == 'heating' %}{% endif %}
+      {{ heating and has_value(climate)
+         and state_attr(climate, 'temperature') | float(none) == target
+         and is_number(rise_temperature)
+         and rise_temperature >= start_temperature + threshold | float(0.2)
+         and rise_temperature < target }}
+  # 2. Fin de la montée : consigne atteinte.
+  - wait_template: >-
+      {% if signal.startswith('binary_sensor.') %}{% set heating = is_state(signal, 'on') %}
+      {% elif signal_mode == 'state' %}{% set heating = is_state(signal, 'heat') %}
+      {% else %}{% set heating = has_value(signal) and state_attr(signal, 'hvac_action') == 'heating' %}{% endif %}
       {{ not heating or not has_value(climate)
          or state_attr(climate, 'temperature') | float(none) != target
          or not is_number(states(sensor)) or states(sensor) | float(0) >= target }}
     timeout: "06:00:00"
     continue_on_timeout: false
   - variables:
+      finish_time: "{{ as_timestamp(now()) }}"
       finish_temperature: "{{ states(sensor) | float(none) }}"
-      duration: "{{ as_timestamp(now()) - started }}"
+      duration: "{{ finish_time - started }}"
+      net_duration: "{{ finish_time - rise_time }}"
+      per_unit: "{{ 60 if unit == 'minute' else 3600 }}"
+      learn_dead: "{{ (dead_helper or '') | length > 0 }}"
+      # Pente nette en °C/s, après le retard.
+      net_slope: >-
+        {{ ((finish_temperature - rise_temperature) / net_duration)
+           if is_number(finish_temperature) and net_duration > 0 else 0 }}
+      # Retard = début de chauffe → instant où la droite de montée part de la température initiale.
+      dead_minutes: >-
+        {{ (((([0, (rise_time - started) - (rise_temperature - start_temperature) / net_slope] | max) / 60)) | round(1))
+           if net_slope > 0 else -1 }}
+      measured: >-
+        {% if learn_dead %}{{ net_slope * per_unit }}
+        {% elif is_number(finish_temperature) and duration > 0 %}{{ (finish_temperature - start_temperature) / duration * per_unit }}
+        {% else %}0{% endif %}
       previous: "{{ states(helper) | float(none) }}"
+      learned: "{{ ((0.7 * previous + 0.3 * measured) | round(6)) if is_number(previous) else 0 }}"
+      lower: "{{ state_attr(helper, 'min') | float(none) }}"
+      upper: "{{ state_attr(helper, 'max') | float(none) }}"
+      previous_dead: "{{ (states(dead_helper) | float(none)) if learn_dead else none }}"
+      learned_dead: >-
+        {% if not learn_dead %}-1
+        {% elif is_number(previous_dead) %}{{ (0.7 * previous_dead + 0.3 * dead_minutes) | round(1) }}
+        {% else %}{{ dead_minutes }}{% endif %}
+      dead_lower: "{{ (state_attr(dead_helper, 'min') | float(none)) if learn_dead else none }}"
+      dead_upper: "{{ (state_attr(dead_helper, 'max') | float(none)) if learn_dead else none }}"
+      outdoor_temperature: "{{ (states(outdoor) | float(none)) if (outdoor or '') | length > 0 else none }}"
   - condition: template
     value_template: >-
-      {% set heating = is_state(signal, 'on') if signal.startswith('binary_sensor.')
-         else has_value(signal) and state_attr(signal, 'hvac_action') == 'heating' %}
+      {% if signal.startswith('binary_sensor.') %}{% set heating = is_state(signal, 'on') %}
+      {% elif signal_mode == 'state' %}{% set heating = is_state(signal, 'heat') %}
+      {% else %}{% set heating = has_value(signal) and state_attr(signal, 'hvac_action') == 'heating' %}{% endif %}
       {{ heating and has_value(climate)
          and state_attr(climate, 'temperature') | float(none) == target
          and is_number(finish_temperature) and finish_temperature >= target
          and 300 <= duration <= 21600
-         and is_number(previous) and previous > 0 }}
-  - variables:
-      measured: "{{ (finish_temperature - start_temperature) / duration * (60 if unit == 'minute' else 3600) }}"
-      learned: "{{ (0.7 * previous + 0.3 * measured) | round(6) }}"
-      lower: "{{ state_attr(helper, 'min') | float(none) }}"
-      upper: "{{ state_attr(helper, 'max') | float(none) }}"
-  - condition: template
-    value_template: >-
-      {{ is_number(lower) and is_number(upper)
+         and is_number(previous) and previous > 0
+         and is_number(lower) and is_number(upper)
          and measured > 0 and lower <= measured <= upper
-         and lower <= learned <= upper and learned > 0 }}
+         and lower <= learned <= upper and learned > 0
+         and (not learn_dead or (net_duration >= 300 and dead_minutes >= 0
+              and is_number(dead_lower) and is_number(dead_upper)
+              and dead_lower <= dead_minutes <= dead_upper
+              and dead_lower <= learned_dead <= dead_upper)) }}
   - action: input_number.set_value
     target:
       entity_id: !input slope_helper
     data:
       value: "{{ learned }}"
+  - if:
+      - condition: template
+        value_template: "{{ learn_dead }}"
+    then:
+      - action: input_number.set_value
+        target:
+          entity_id: "{{ dead_helper }}"
+        data:
+          value: "{{ learned_dead }}"
+  - action: logbook.log
+    data:
+      name: Heating Planner - Apprentissage
+      entity_id: !input slope_helper
+      message: >-
+        Cycle retenu : {{ start_temperature }} → {{ finish_temperature }} °C en {{ (duration / 60) | round(0) | int }} min ;
+        {%- if learn_dead %} retard mesuré {{ dead_minutes }} min, enregistré {{ learned_dead }} min ;{% endif %}
+        pente mesurée {{ measured | round(4) }}, enregistrée {{ learned }} (°C/{{ 'min' if unit == 'minute' else 'h' }}) ;
+        extérieur {{ outdoor_temperature if is_number(outdoor_temperature) else 'n/d' }} °C.

@@ -279,7 +279,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 "weekly": copy.deepcopy(state["weekly"]), "exceptions": copy.deepcopy(state["exceptions"]),
                 "wakes": copy.deepcopy(hass.data[f"{DOMAIN}_wakes"]), "override": copy.deepcopy(state["override"]),
                 "temperature": reading(options["temperature_entity"]),
-                "slope": reading(options["slope_entity"])}
+                "slope": reading(options["slope_entity"]),
+                "dead_time": reading(options.get("dead_time_entity"))}
 
     async def update():
         nonlocal calculation_cache

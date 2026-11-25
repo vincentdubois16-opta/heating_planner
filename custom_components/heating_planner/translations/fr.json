@@ -26,6 +26,8 @@
           "dynamic_preheat": "Activer le préchauffage dynamique",
           "temperature_entity": "Entité de température (°C)",
           "slope_entity": "Entité de vitesse de chauffe",
+          "dead_time_minutes": "Retard avant la montée (minutes, valeur fixe)",
+          "dead_time_entity": "Entité du retard appris (minutes, facultatif ; remplace la valeur fixe)",
           "max_preheat_minutes": "Durée maximale du préchauffage dynamique (minutes)",
           "slope_unit": "Unité de la valeur de vitesse (hour = °C/h, minute = °C/min)"
         }

@@ -2,13 +2,22 @@
 import copy
 from .schedule_engine import build_timeline
 from .preheat_engine import calculate_with_preheat
-from .dynamic_preheat import calculate_dynamic, normalize_slope
+from .dynamic_preheat import calculate_dynamic, normalize_slope, normalize_dead_time
 from .override_engine import apply_override
 from .away_preheat import apply_temporary_mode
 
 
 def configuration_key(snapshot):
     return repr(tuple(snapshot[key] for key in ("options", "weekly", "exceptions", "wakes", "override", "timezone", "zone")))
+
+
+def effective_dead_time(options, learned):
+    """Learned delay (minutes) when its helper is valid, otherwise the room's fixed delay."""
+    value = normalize_dead_time(learned) if options.get("dead_time_entity") else None
+    if value is not None:
+        return value, "learned"
+    fixed = normalize_dead_time(options.get("dead_time_minutes", 0))
+    return (fixed or 0), "fixed"
 
 
 def calculate_cycle(snapshot, previous_cache):
@@ -25,15 +34,19 @@ def calculate_cycle(snapshot, previous_cache):
     args = (snapshot["timezone"], snapshot["profiles"], snapshot["weekly"], snapshot["exceptions"], snapshot["wakes"], snapshot["zone"])
     fixed = options.get("preheat_minutes", 0)
     speed = normalize_slope(snapshot["slope"], options.get("slope_unit", "hour"))
+    dead_time, dead_source = effective_dead_time(options, snapshot.get("dead_time"))
     def planner(moment):
         return calculate_with_preheat(moment, *args, fixed, timeline=timeline)
     if options.get("dynamic_preheat", False):
         base = calculate_dynamic(now, *args, fixed, options.get("max_preheat_minutes", 180),
                                  snapshot["temperature"], speed,
-                                 cache["dynamic"] if status["active_mode"] == "planning" else {}, timeline=timeline)
+                                 cache["dynamic"] if status["active_mode"] == "planning" else {}, timeline=timeline,
+                                 dead_time=dead_time)
     else:
         base = planner(now)
     effective = apply_temporary_mode(base, snapshot["override"], now, planner,
         options.get("dynamic_preheat", False), snapshot["temperature"], speed,
-        options.get("max_preheat_minutes", 180), fixed, cache["away"])
+        options.get("max_preheat_minutes", 180), fixed, cache["away"], dead_time=dead_time)
+    # Always published: alert automations read it even when preheat is fixed.
+    effective.update(dead_time_minutes=round(dead_time, 1), dead_time_source=dead_source)
     return effective, cache

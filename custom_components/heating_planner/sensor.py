@@ -1,6 +1,6 @@
 """Read-only preview entities."""
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
-from homeassistant.const import UnitOfTemperature
+from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN
 
@@ -13,6 +13,7 @@ SENSORS = (
     ("preheat_start", "Début préchauffage", "preheat_start"),
     ("active_mode", "Mode actif", "active_mode"),
     ("override_until", "Fin du mode temporaire", "override_until"),
+    ("dead_time", "Retard de chauffe", "dead_time_minutes"),
 )
 
 
@@ -40,6 +41,10 @@ class HeatingPlannerSensor(CoordinatorEntity, SensorEntity):
         }
         if key in ("next_change", "preheat_start", "override_until"):
             self._attr_device_class = SensorDeviceClass.TIMESTAMP
+        elif key == "dead_time":
+            self._attr_device_class = SensorDeviceClass.DURATION
+            self._attr_native_unit_of_measurement = UnitOfTime.MINUTES
+            self._attr_icon = "mdi:timer-sand"
         elif key != "active_mode":
             self._attr_device_class = SensorDeviceClass.TEMPERATURE
             self._attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
@@ -50,6 +55,9 @@ class HeatingPlannerSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
+        if self._key == "dead_time":
+            # "learned" = assistant appris valide, "fixed" = valeur des options de la pièce.
+            return {"source": self.coordinator.data.get("dead_time_source")}
         if self._key != "target":
             return None
         return {key: value.isoformat() if hasattr(value, "isoformat") else value

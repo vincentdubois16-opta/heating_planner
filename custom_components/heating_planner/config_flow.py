@@ -38,6 +38,8 @@ class HeatingPlannerOptionsFlow(config_entries.OptionsFlow):
                 "temperature_entity": user_input["temperature_entity"].strip(),
                 "slope_entity": user_input["slope_entity"].strip(),
                 "slope_unit": user_input["slope_unit"],
+                "dead_time_minutes": int(user_input["dead_time_minutes"]),
+                "dead_time_entity": user_input.get("dead_time_entity", "").strip(),
                 "max_preheat_minutes": user_input["max_preheat_minutes"],
                 "away_temperature": float(user_input["away_temperature"]),
                 "boost_temperature": float(user_input["boost_temperature"]),
@@ -58,5 +60,8 @@ class HeatingPlannerOptionsFlow(config_entries.OptionsFlow):
         schema[vol.Required("temperature_entity", default=self.config_entry.options.get("temperature_entity", defaults["temperature_entity"]))] = str
         schema[vol.Required("slope_unit", default=self.config_entry.options.get("slope_unit", "hour"))] = vol.In({"hour": "°C/h", "minute": "°C/min"})
         schema[vol.Required("slope_entity", default=self.config_entry.options.get("slope_entity", defaults["slope_entity"]))] = str
+        schema[vol.Required("dead_time_minutes", default=int(self.config_entry.options.get("dead_time_minutes", defaults["dead_time_minutes"])))] = vol.All(vol.Coerce(int), vol.Range(min=0, max=120))
+        # suggested_value (not default) so that clearing the field really removes the learned helper.
+        schema[vol.Optional("dead_time_entity", description={"suggested_value": self.config_entry.options.get("dead_time_entity", defaults["dead_time_entity"])})] = str
         schema[vol.Required("max_preheat_minutes", default=self.config_entry.options.get("max_preheat_minutes", 180))] = vol.All(vol.Coerce(int), vol.Range(min=0, max=360))
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))

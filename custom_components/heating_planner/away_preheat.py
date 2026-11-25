@@ -2,11 +2,11 @@
 import math
 from datetime import timedelta
 from .override_engine import apply_override
-from .dynamic_preheat import positive
+from .dynamic_preheat import positive, lead_minutes
 
 
 def apply_temporary_mode(base, override, now, planner, dynamic, temperature, slope,
-                         maximum, fixed_minutes, cache):
+                         maximum, fixed_minutes, cache, dead_time=0):
     result = apply_override(base, override, now)
     if result["active_mode"] == "planning":
         cache.clear()
@@ -33,7 +33,7 @@ def apply_temporary_mode(base, override, now, planner, dynamic, temperature, slo
     speed = positive(slope)
     strategy = "dynamic" if dynamic and measured is not None and speed is not None else "fixed_fallback" if dynamic else "fixed"
     if strategy == "dynamic":
-        lead = min(max(0, min(360, int(maximum))), max(0, math.ceil((target-measured)/speed*60)))
+        lead = lead_minutes(target-measured, speed, dead_time, max(0, min(360, int(maximum))))
     else:
         lead = max(0, min(360, int(fixed_minutes)))
     key = (expiry, target, strategy)

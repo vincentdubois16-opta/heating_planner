@@ -1,0 +1,165 @@
+blueprint:
+  name: Heating Planner - Alerte chauffe sans montée
+  description: >
+    Prévient quand la chauffe est demandée mais que la pièce ne gagne pas le seuil choisi dans le délai
+    attendu. Délai = retard de chauffe de la pièce (capteur Heating Planner) × facteur + marge, borné par
+    le minimum et le maximum. Ne commande aucun appareil. Les actions supplémentaires peuvent utiliser
+    les variables message, room, delay_minutes et start_temperature.
+  domain: automation
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    room_name:
+      name: Nom de la pièce
+      selector:
+        text: {}
+    heat_signal:
+      name: Signal de chauffe réelle
+      description: Le même que pour l'apprentissage de la pièce.
+      selector:
+        entity:
+          filter:
+            - domain: climate
+            - domain: binary_sensor
+    climate_signal_mode:
+      name: Lecture du signal climate
+      description: Ignoré pour un capteur binaire. Choisir « État heat » pour les thermostats OPTA.
+      default: hvac_action
+      selector:
+        select:
+          options:
+            - label: hvac_action = heating
+              value: hvac_action
+            - label: État heat = demande de chauffe (OPTA)
+              value: state
+    room_sensor:
+      name: Sonde de pièce en °C
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+    dead_time_sensor:
+      name: Retard de chauffe de la pièce
+      description: Capteur « Retard de chauffe » de Heating Planner (appris, ou valeur fixe de la pièce).
+      selector:
+        entity:
+          filter:
+            - integration: heating_planner
+              domain: sensor
+    factor:
+      name: Facteur appliqué au retard
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 4
+          step: 0.25
+    margin_minutes:
+      name: Marge ajoutée (minutes)
+      default: 10
+      selector:
+        number:
+          min: 0
+          max: 60
+          step: 1
+    minimum_minutes:
+      name: Délai minimum (minutes)
+      default: 15
+      selector:
+        number:
+          min: 5
+          max: 120
+          step: 1
+    maximum_minutes:
+      name: Délai maximum (minutes)
+      default: 120
+      selector:
+        number:
+          min: 15
+          max: 240
+          step: 5
+    rise_threshold:
+      name: Hausse attendue (°C)
+      default: 0.2
+      selector:
+        number:
+          min: 0.1
+          max: 1
+          step: 0.05
+    alert_actions:
+      name: Actions supplémentaires (notification téléphone, etc.)
+      description: Une notification persistante est toujours créée.
+      default: []
+      selector:
+        action: {}
+
+mode: single
+max_exceeded: silent
+triggers:
+  - trigger: state
+    entity_id: !input heat_signal
+variables:
+  room: !input room_name
+  signal: !input heat_signal
+  signal_mode: !input climate_signal_mode
+  sensor: !input room_sensor
+  dead_sensor: !input dead_time_sensor
+  factor: !input factor
+  margin: !input margin_minutes
+  minimum: !input minimum_minutes
+  maximum: !input maximum_minutes
+  threshold: !input rise_threshold
+conditions:
+  - condition: template
+    value_template: >-
+      {% if trigger is not defined or trigger.from_state is none or trigger.to_state is none %}
+        false
+      {% elif trigger.from_state.state in ['unknown', 'unavailable']
+           or trigger.to_state.state in ['unknown', 'unavailable'] %}
+        false
+      {% elif signal.startswith('binary_sensor.') %}
+        {{ trigger.from_state.state == 'off' and trigger.to_state.state == 'on' }}
+      {% elif signal_mode == 'state' %}
+        {{ trigger.from_state.state != 'heat' and trigger.to_state.state == 'heat' }}
+      {% else %}
+        {{ trigger.from_state.attributes.get('hvac_action') in ['off', 'idle']
+           and trigger.to_state.attributes.get('hvac_action') == 'heating' }}
+      {% endif %}
+actions:
+  - variables:
+      start_temperature: "{{ states(sensor) | float(none) }}"
+      dead_time: "{{ states(dead_sensor) | float(none) }}"
+      delay_minutes: >-
+        {% set low = minimum | float(15) %}{% set high = [low, maximum | float(120)] | max %}
+        {% if is_number(dead_time) %}{% set wanted = dead_time * factor | float(2) + margin | float(10) %}
+        {% else %}{% set wanted = low %}{% endif %}
+        {{ ([low, [wanted, high] | min] | max) | round(0) | int }}
+  - condition: template
+    value_template: "{{ is_number(start_temperature) }}"
+  - wait_template: >-
+      {% if signal.startswith('binary_sensor.') %}{% set heating = is_state(signal, 'on') %}
+      {% elif signal_mode == 'state' %}{% set heating = is_state(signal, 'heat') %}
+      {% else %}{% set heating = has_value(signal) and state_attr(signal, 'hvac_action') == 'heating' %}{% endif %}
+      {{ not heating
+         or (is_number(states(sensor)) and states(sensor) | float(0) >= start_temperature + threshold | float(0.2)) }}
+    timeout: "{{ delay_minutes * 60 }}"
+    continue_on_timeout: true
+  - condition: template
+    value_template: >-
+      {% if signal.startswith('binary_sensor.') %}{% set heating = is_state(signal, 'on') %}
+      {% elif signal_mode == 'state' %}{% set heating = is_state(signal, 'heat') %}
+      {% else %}{% set heating = has_value(signal) and state_attr(signal, 'hvac_action') == 'heating' %}{% endif %}
+      {{ not wait.completed and heating and is_number(states(sensor))
+         and states(sensor) | float(0) < start_temperature + threshold | float(0.2) }}
+  - variables:
+      message: >-
+        {{ room }} : chauffe demandée depuis {{ delay_minutes }} min sans gagner {{ threshold }} °C
+        ({{ start_temperature }} → {{ states(sensor) }} °C ; retard de chauffe
+        {{ dead_time | round(0) | int if is_number(dead_time) else 'inconnu' }} min). Vérifier le poêle, la chaudière ou les vannes.
+  - action: persistent_notification.create
+    data:
+      title: Heating Planner - chauffe sans montée
+      notification_id: "{{ 'heating_planner_sans_montee_' ~ signal }}"
+      message: "{{ message }}"
+  - choose: []
+    default: !input alert_actions
