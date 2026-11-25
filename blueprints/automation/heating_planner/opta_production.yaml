@@ -1,0 +1,212 @@
+blueprint:
+  name: Heating Planner - Production OPTA par pièce
+  description: >
+    Transmet la consigne effective Heating Planner au topic MQTT de la pièce,
+    avec retain et QoS 1. Les vannes facultatives suivent la consigne avec
+    un décalage réglable. Observation activée par défaut.
+  domain: automation
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    source_sensor:
+      name: Consigne actuelle de Heating Planner
+      description: Sélectionner le capteur de l'intégration Heating Planner, pas l'ancien capteur YAML Consigne effective.
+      selector:
+        entity:
+          domain: sensor
+    climate_target:
+      name: Thermostat OPTA
+      selector:
+        entity:
+          domain: climate
+    authorization:
+      name: Autorisation d'envoi
+      selector:
+        entity:
+          domain: input_boolean
+    trv_targets:
+      name: Vannes de la pièce (facultatives)
+      default: []
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+    mqtt_topic:
+      name: Topic MQTT de consigne
+      description: Exemple opta/target/set/MaxBedroom. Respecter exactement la casse du nom connu par OPTA.
+      selector:
+        text: {}
+    trv_offset:
+      name: Décalage de consigne des vannes (°C)
+      default: 2
+      selector:
+        number:
+          min: -5
+          max: 5
+          step: 0.5
+          mode: box
+    required_preset:
+      name: Preset OPTA autorisant les envois
+      default: planning
+      description: Un autre preset, comme le hors-gel, bloque les envois.
+      selector:
+        text: {}
+    observation_only:
+      name: Observation uniquement (aucune commande)
+      default: true
+      selector:
+        boolean: {}
+
+mode: single
+max_exceeded: silent
+
+triggers:
+  - trigger: homeassistant
+    event: start
+  - trigger: state
+    entity_id: !input source_sensor
+  - trigger: state
+    entity_id: !input climate_target
+  - trigger: state
+    entity_id: !input authorization
+  - trigger: time_pattern
+    minutes: '/1'
+
+variables:
+  source_entity: !input source_sensor
+  climate_entity: !input climate_target
+  authorization_entity: !input authorization
+  observation: !input observation_only
+  trv_entities: !input trv_targets
+  mqtt_topic_value: !input mqtt_topic
+  trv_offset_value: !input trv_offset
+  expected_preset: !input required_preset
+  requested: '{{ states(source_entity) }}'
+  trv_target: >-
+    {% if is_state(climate_entity, 'heat') %}
+      {{ ((requested | float(0)) + (trv_offset_value | float(0))) | round(6) }}
+    {% else %}
+      7
+    {% endif %}
+
+  reported: '{{ state_attr(climate_entity, "temperature") }}'
+  preset: '{{ state_attr(climate_entity, "preset_mode") }}'
+  limits_valid: >-
+    {{ is_number(state_attr(climate_entity, 'min_temp'))
+       and is_number(state_attr(climate_entity, 'max_temp'))
+       and is_number(state_attr(climate_entity, 'target_temp_step'))
+       and state_attr(climate_entity, 'target_temp_step') | float(0) > 0 }}
+  topic_valid: >-
+    {{ mqtt_topic_value is string and mqtt_topic_value | trim != ''
+       and mqtt_topic_value == (mqtt_topic_value | trim)
+       and '+' not in mqtt_topic_value and '#' not in mqtt_topic_value }}
+  values_valid: >-
+    {% set lower = state_attr(climate_entity, 'min_temp') | float(5) %}
+    {% set upper = state_attr(climate_entity, 'max_temp') | float(30) %}
+    {% set step = state_attr(climate_entity, 'target_temp_step') | float(0) %}
+    {% set t = requested | float(0) %}
+    {{ source_entity in integration_entities('heating_planner')
+       and topic_valid and trv_entities is sequence and trv_entities is not string
+       and is_number(trv_offset_value)
+       and -5 <= trv_offset_value | float(0) <= 5
+       and limits_valid and is_number(requested) and is_number(reported)
+       and state_attr(source_entity, 'unit_of_measurement') == '°C'
+       and lower <= t <= upper
+       and states(climate_entity) in ['off', 'heat']
+       and is_number(state_attr(climate_entity, 'current_temperature'))
+       and step > 0
+       and (((t-lower)/step - ((t-lower)/step)|round(0))|abs < 0.0001) }}
+  difference: '{{ ((requested | float(0)) - (reported | float(0))) | abs }}'
+  ready: >-
+    {{ values_valid and expected_preset is string
+       and expected_preset | trim != '' and preset == expected_preset }}
+  reason: >-
+    {% if not values_valid %}Source hors Heating Planner, topic invalide, valeur indisponible, unité ou pas incompatible
+    {% elif preset != expected_preset %}Preset OPTA protégé : {{ preset }}
+    {% elif difference | float(0) < 0.1 %}Consigne OPTA confirmée ; vérifier aussi les vannes
+    {% else %}Consigne différente, envoi possible après autorisation{% endif %}
+
+actions:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: '{{ observation }}'
+        sequence:
+          - action: logbook.log
+            data:
+              name: Heating Planner - Observation de la pièce
+              entity_id: '{{ climate_entity }}'
+              message: >-
+                Aucun envoi. Calcul={{ requested }} °C ; retour OPTA={{ reported }} °C ;
+                preset={{ preset }} ; vannes={{ trv_entities }} à {{ trv_target }} °C ; {{ reason }}.
+          - repeat:
+              for_each: '{{ trv_entities | unique | list }}'
+              sequence:
+                - action: logbook.log
+                  data:
+                    name: Heating Planner - Observation vanne
+                    entity_id: '{{ repeat.item }}'
+                    message: >-
+                      Aucun envoi. Cible={{ trv_target }} °C ;
+                      retour={{ state_attr(repeat.item, 'temperature') }} °C ;
+                      état={{ states(repeat.item) }} ;
+                      limites={{ state_attr(repeat.item, 'min_temp') }}–{{ state_attr(repeat.item, 'max_temp') }} °C ;
+                      pas={{ state_attr(repeat.item, 'target_temp_step') }} °C.
+    default:
+      - condition: state
+        entity_id: !input authorization
+        state: 'on'
+      - condition: template
+        value_template: '{{ ready }}'
+      # Revalider juste avant l'unique action de commande.
+      - condition: template
+        value_template: >-
+          {{ not observation and is_state(authorization_entity, 'on')
+             and is_number(states(source_entity))
+             and states(source_entity) | float == requested | float
+             and states(climate_entity) in ['off', 'heat']
+             and state_attr(climate_entity, 'preset_mode') == expected_preset
+             and state_attr(climate_entity, 'temperature') == reported }}
+      - if:
+          - condition: template
+            value_template: >-
+              {{ difference | float(0) >= 0.1 or trigger is not defined
+                 or trigger.platform in ['time_pattern', 'homeassistant']
+                 or trigger.entity_id | default('') == authorization_entity }}
+        then:
+          - action: mqtt.publish
+            data:
+              topic: !input mqtt_topic
+              payload: '{{ requested | float }}'
+              retain: true
+              qos: 1
+      - repeat:
+          for_each: '{{ trv_entities | unique | list }}'
+          sequence:
+            - if:
+                - condition: template
+                  value_template: >-
+                    {% set low = state_attr(repeat.item, 'min_temp') %}
+                    {% set high = state_attr(repeat.item, 'max_temp') %}
+                    {% set step = state_attr(repeat.item, 'target_temp_step') %}
+                    {% set echo = state_attr(repeat.item, 'temperature') %}
+                    {{ not observation and is_state(authorization_entity, 'on')
+                       and state_attr(climate_entity, 'preset_mode') == expected_preset
+                       and states(climate_entity) in ['off', 'heat']
+                       and is_number(states(source_entity))
+                       and states(source_entity) | float == requested | float
+                       and repeat.item != climate_entity
+                       and states(repeat.item) not in ['unknown', 'unavailable']
+                       and is_number(low) and is_number(high) and is_number(step)
+                       and is_number(echo) and step | float(0) > 0
+                       and low | float <= trv_target | float <= high | float
+                       and (((trv_target | float - low | float) / (step | float)
+                          - ((trv_target | float - low | float) / (step | float)) | round(0)) | abs < 0.0001)
+                       and ((echo | float - trv_target | float) | abs >= 0.1) }}
+              then:
+                - action: climate.set_temperature
+                  continue_on_error: true
+                  target:
+                    entity_id: '{{ repeat.item }}'
+                  data:
+                    temperature: '{{ trv_target | float }}'
